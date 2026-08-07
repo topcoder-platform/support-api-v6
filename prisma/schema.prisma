@@ -1,0 +1,146 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  schemas  = ["support"]
+}
+
+enum TicketStatus {
+  OPEN
+  CLOSED
+
+  @@schema("support")
+}
+
+enum NotificationChannel {
+  EMAIL
+  SLACK
+
+  @@schema("support")
+}
+
+enum NotificationType {
+  TICKET_OPENED
+  TICKET_REPLIED
+  TICKET_CLOSED
+
+  @@schema("support")
+}
+
+enum NotificationStatus {
+  PENDING
+  PROCESSING
+  SENT
+  FAILED
+  DEAD
+
+  @@schema("support")
+}
+
+model SupportTicket {
+  id                 String               @id @default(uuid()) @db.Uuid
+  memberUserId       String               @db.VarChar(64)
+  memberHandle       String               @db.VarChar(100)
+  memberHandleColor  String?              @db.VarChar(32)
+  challengeId        String?              @db.VarChar(64)
+  description        String               @db.Text
+  status             TicketStatus         @default(OPEN)
+  openedAt           DateTime             @default(now())
+  closedAt           DateTime?
+  closedByUserId     String?              @db.VarChar(64)
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+  responses          SupportResponse[]
+  assignees          TicketAssignee[]
+  readStates         TicketReadState[]
+  notificationOutbox NotificationOutbox[]
+
+  @@index([status, openedAt])
+  @@index([memberUserId, status, openedAt])
+  @@index([challengeId])
+  @@map("support_tickets")
+  @@schema("support")
+}
+
+model SupportResponse {
+  id                 String                @id @default(uuid()) @db.Uuid
+  ticketId           String                @db.Uuid
+  userId             String                @db.VarChar(64)
+  userHandle         String                @db.VarChar(100)
+  userHandleColor    String?               @db.VarChar(32)
+  markdown           String                @db.Text
+  createdAt          DateTime              @default(now())
+  ticket             SupportTicket         @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  readReceipts       ResponseReadReceipt[]
+  notificationOutbox NotificationOutbox[]
+
+  @@index([ticketId, createdAt, id])
+  @@map("support_responses")
+  @@schema("support")
+}
+
+model TicketAssignee {
+  ticketId         String        @db.Uuid
+  userId           String        @db.VarChar(64)
+  handle           String        @db.VarChar(100)
+  handleColor      String?       @db.VarChar(32)
+  assignedAt       DateTime      @default(now())
+  assignedByUserId String        @db.VarChar(64)
+  ticket           SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@id([ticketId, userId])
+  @@index([userId])
+  @@map("ticket_assignees")
+  @@schema("support")
+}
+
+model TicketReadState {
+  ticketId   String        @db.Uuid
+  userId     String        @db.VarChar(64)
+  lastReadAt DateTime      @default(now())
+  ticket     SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@id([ticketId, userId])
+  @@index([userId])
+  @@map("ticket_read_states")
+  @@schema("support")
+}
+
+model ResponseReadReceipt {
+  responseId String          @db.Uuid
+  userId     String          @db.VarChar(64)
+  readAt     DateTime        @default(now())
+  response   SupportResponse @relation(fields: [responseId], references: [id], onDelete: Cascade)
+
+  @@id([responseId, userId])
+  @@index([userId])
+  @@map("response_read_receipts")
+  @@schema("support")
+}
+
+model NotificationOutbox {
+  id            String              @id @default(uuid()) @db.Uuid
+  dedupeKey     String              @unique @db.VarChar(180)
+  ticketId      String              @db.Uuid
+  responseId    String?             @db.Uuid
+  channel       NotificationChannel
+  type          NotificationType
+  status        NotificationStatus  @default(PENDING)
+  attempts      Int                 @default(0)
+  nextAttemptAt DateTime            @default(now())
+  lockedAt      DateTime?
+  sentAt        DateTime?
+  lastError     String?             @db.VarChar(1000)
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+  ticket        SupportTicket       @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  response      SupportResponse?    @relation(fields: [responseId], references: [id], onDelete: Cascade)
+
+  @@index([status, nextAttemptAt])
+  @@index([ticketId, type])
+  @@map("notification_outbox")
+  @@schema("support")
+}

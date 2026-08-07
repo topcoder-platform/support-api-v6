@@ -1,0 +1,27 @@
+packages:
+  - .
+
+# The shared Bus API wrapper intentionally consumes tc-core-library-js from a
+# Git repository.
+blockExoticSubdeps: false
+autoInstallPeers: false
+
+peerDependencyRules:
+  ignoreMissing:
+    - '@types/react'
+    - react
+    - react-dom
+
+overrides:
+  axios: 1.18.1
+  follow-redirects: 1.16.0
+  form-data: 4.0.6
+  lodash: 4.18.1
+
+allowBuilds:
+  '@nestjs/core': false
+  '@prisma/client': true
+  '@prisma/engines': true
+  '@scarf/scarf': false
+  dtrace-provider: false
+  prisma: true

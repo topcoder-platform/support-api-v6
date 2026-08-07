@@ -1,0 +1,68 @@
+version: 2.1
+
+defaults: &defaults
+  docker:
+    - image: cimg/python:3.13.2-browsers
+
+install_dependency: &install_dependency
+  name: Install build and deployment dependencies
+  command: |
+    sudo apt update
+    sudo apt install -y jq python3-pip
+    sudo pip3 install awscli --upgrade
+
+install_deploysuite: &install_deploysuite
+  name: Install Topcoder deployment suite
+  command: |
+    git clone --depth 1 --branch v1.4.21 https://github.com/topcoder-platform/tc-deploy-scripts ../buildscript
+    cp ../buildscript/master_deploy.sh .
+    cp ../buildscript/buildenv.sh .
+    cp ../buildscript/awsconfiguration.sh .
+    cp ../buildscript/psvar-processor.sh .
+
+builddeploy_steps: &builddeploy_steps
+  - checkout
+  - setup_remote_docker
+  - run: *install_dependency
+  - run: *install_deploysuite
+  - run:
+      name: Validate and build image
+      command: docker buildx build --load --no-cache=true --platform linux/amd64 --tag "${APPNAME}:latest" .
+  - run:
+      name: Deploy to existing ECS service
+      command: |
+        ./awsconfiguration.sh "$DEPLOY_ENV"
+        source awsenvconf
+        ./psvar-processor.sh -t appenv -p "/config/${APPNAME}/deployvar"
+        source deployvar_env
+        ./master_deploy.sh -d ECS -e "$DEPLOY_ENV" -t latest -j "/config/${APPNAME}/appvar,/config/common/global-appvar" -i "$APPNAME" -p FARGATE
+
+jobs:
+  build-dev:
+    <<: *defaults
+    environment:
+      APPNAME: support-api-v6
+      DEPLOY_ENV: DEV
+      DEPLOYMENT_ENVIRONMENT: dev
+    steps: *builddeploy_steps
+  build-prod:
+    <<: *defaults
+    environment:
+      APPNAME: support-api-v6
+      DEPLOY_ENV: PROD
+      DEPLOYMENT_ENVIRONMENT: prod
+    steps: *builddeploy_steps
+
+workflows:
+  build-and-deploy:
+    jobs:
+      - build-dev:
+          context: org-global
+          filters:
+            branches:
+              only: develop
+      - build-prod:
+          context: org-global
+          filters:
+            branches:
+              only: master
