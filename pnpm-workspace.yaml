@@ -13,6 +13,7 @@ peerDependencyRules:
     - react-dom
 
 overrides:
+  '@nestjs/swagger>js-yaml': 5.2.3
   axios: 1.18.1
   follow-redirects: 1.16.0
   form-data: 4.0.6
