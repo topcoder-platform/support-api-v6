@@ -7,6 +7,7 @@ import {
 } from '@prisma/client';
 import { DbService } from '../db/db.service';
 import { EventBusService } from '../integrations/event-bus.service';
+import { IntegrationDeliveryError } from '../integrations/integration-delivery.error';
 import { SlackService } from '../integrations/slack.service';
 import { MemberDirectoryService } from './member-directory.service';
 import {
@@ -120,11 +121,12 @@ describe('NotificationOutboxService enqueue', () => {
   it('uses stable unique keys and skipDuplicates for opened and closed channels', async () => {
     const { service, tx } = createHarness();
     const prismaTx = tx as unknown as Prisma.TransactionClient;
+    const firstCloseEventId = 'close-event-1';
 
     await expect(
       service.queueTicketOpened(prismaTx, 'ticket-1'),
     ).resolves.toEqual(['outbox-1', 'outbox-2']);
-    await service.queueTicketClosed(prismaTx, 'ticket-1');
+    await service.queueTicketClosed(prismaTx, 'ticket-1', firstCloseEventId);
 
     expect(tx.notificationOutbox.createMany).toHaveBeenNthCalledWith(1, {
       data: [
@@ -148,15 +150,47 @@ describe('NotificationOutboxService enqueue', () => {
       expect.objectContaining({
         data: expect.arrayContaining([
           expect.objectContaining({
-            dedupeKey: 'ticket:ticket-1:closed:email',
+            dedupeKey: 'ticket:ticket-1:closed:close-event-1:email',
           }),
           expect.objectContaining({
-            dedupeKey: 'ticket:ticket-1:closed:slack',
+            dedupeKey: 'ticket:ticket-1:closed:close-event-1:slack',
           }),
         ]),
         skipDuplicates: true,
       }),
     );
+  });
+
+  it('uses distinct close-reopen-close keys across lifecycle cycles', async () => {
+    const { service, tx } = createHarness();
+    const prismaTx = tx as unknown as Prisma.TransactionClient;
+    tx.supportResponse.findUnique.mockResolvedValue({
+      ticket: { memberUserId: '1001' },
+      ticketId: 'ticket-1',
+      userId: '1001',
+    });
+
+    await service.queueTicketClosed(prismaTx, 'ticket-1', 'close-event-1');
+    await service.queueTicketReopened(
+      prismaTx,
+      'ticket-1',
+      'response-reopen-1',
+    );
+    await service.queueTicketClosed(prismaTx, 'ticket-1', 'close-event-2');
+
+    const dedupeKeys = tx.notificationOutbox.createMany.mock.calls.flatMap(
+      ([argument]) =>
+        argument.data.map((intent: { dedupeKey: string }) => intent.dedupeKey),
+    );
+    expect(dedupeKeys).toEqual([
+      'ticket:ticket-1:closed:close-event-1:email',
+      'ticket:ticket-1:closed:close-event-1:slack',
+      'ticket:ticket-1:response:response-reopen-1:reopened:email',
+      'ticket:ticket-1:response:response-reopen-1:reopened:slack',
+      'ticket:ticket-1:closed:close-event-2:email',
+      'ticket:ticket-1:closed:close-event-2:slack',
+    ]);
+    expect(new Set(dedupeKeys)).toHaveProperty('size', dedupeKeys.length);
   });
 
   it('propagates enqueue failure so the surrounding domain transaction rolls back', async () => {
@@ -209,6 +243,48 @@ describe('NotificationOutboxService enqueue', () => {
       ],
       skipDuplicates: true,
     });
+  });
+
+  it('queues email and Slack only for a member-owner reopen response', async () => {
+    const { service, tx } = createHarness();
+    const prismaTx = tx as unknown as Prisma.TransactionClient;
+    tx.supportResponse.findUnique.mockResolvedValue({
+      ticket: { memberUserId: '1001' },
+      ticketId: 'ticket-1',
+      userId: '1001',
+    });
+
+    await expect(
+      service.queueTicketReopened(prismaTx, 'ticket-1', 'response-reopen'),
+    ).resolves.toEqual(['outbox-1', 'outbox-2']);
+    expect(tx.notificationOutbox.createMany).toHaveBeenCalledWith({
+      data: [
+        {
+          channel: NotificationChannel.EMAIL,
+          dedupeKey: 'ticket:ticket-1:response:response-reopen:reopened:email',
+          responseId: 'response-reopen',
+          ticketId: 'ticket-1',
+          type: NotificationType.TICKET_REOPENED,
+        },
+        {
+          channel: NotificationChannel.SLACK,
+          dedupeKey: 'ticket:ticket-1:response:response-reopen:reopened:slack',
+          responseId: 'response-reopen',
+          ticketId: 'ticket-1',
+          type: NotificationType.TICKET_REOPENED,
+        },
+      ],
+      skipDuplicates: true,
+    });
+
+    tx.supportResponse.findUnique.mockResolvedValue({
+      ticket: { memberUserId: '1001' },
+      ticketId: 'ticket-1',
+      userId: 'staff-1',
+    });
+    await expect(
+      service.queueTicketReopened(prismaTx, 'ticket-1', 'response-staff'),
+    ).rejects.toThrow('member-owner response');
   });
 });
 
@@ -304,27 +380,86 @@ describe('NotificationOutboxService delivery', () => {
     expect(slack.sendNotification).not.toHaveBeenCalled();
   });
 
+  it('delivers reopened email and Slack to Support Team', async () => {
+    const { db, eventBus, members, service, slack } = createHarness();
+    db.$queryRaw.mockResolvedValue([
+      { id: 'reopened-email', lockedAt },
+      { id: 'reopened-slack', lockedAt },
+    ]);
+    db.notificationOutbox.findUnique.mockImplementation(({ where }) =>
+      Promise.resolve(
+        claimedRecord({
+          channel:
+            where.id === 'reopened-email'
+              ? NotificationChannel.EMAIL
+              : NotificationChannel.SLACK,
+          dedupeKey: `ticket:ticket-1:response:response-reopen:reopened:${
+            where.id === 'reopened-email' ? 'email' : 'slack'
+          }`,
+          id: where.id,
+          response: {
+            createdAt: closedAt,
+            id: 'response-reopen',
+            markdown:
+              '**It happened again**. [private](https://secret.example)',
+            ticketId: 'ticket-1',
+            userHandle: 'member_one',
+            userHandleColor: null,
+            userId: '1001',
+          },
+          responseId: 'response-reopen',
+          type: NotificationType.TICKET_REOPENED,
+        }),
+      ),
+    );
+
+    await service.dispatch(['reopened-email', 'reopened-slack']);
+
+    expect(members.listSupportTeamMembers).toHaveBeenCalledTimes(1);
+    expect(eventBus.sendSupportEmail).toHaveBeenCalledWith(
+      'reopened',
+      ['support-one@example.com', 'support-two@example.com'],
+      expect.objectContaining({
+        challengeId: 'challenge-1',
+        memberHandle: 'member_one',
+        reopenedAt: closedAt.toISOString(),
+        responsePreview: 'It happened again. private',
+        ticketId: 'ticket-1',
+      }),
+    );
+    expect(eventBus.sendSupportEmail.mock.calls[0][2]).not.toHaveProperty(
+      'responseMarkdown',
+    );
+    expect(slack.sendNotification).toHaveBeenCalledWith(
+      expect.stringContaining('reopened by member_one'),
+    );
+  });
+
   it('delivers closed member email and Slack, without emailing staff', async () => {
     const { db, eventBus, service, slack } = createHarness();
     db.$queryRaw.mockResolvedValue([
       { id: 'closed-email', lockedAt },
       { id: 'closed-slack', lockedAt },
     ]);
-    db.notificationOutbox.findUnique.mockImplementation(({ where }) =>
-      Promise.resolve(
-        claimedRecord({
-          channel:
-            where.id === 'closed-email'
-              ? NotificationChannel.EMAIL
-              : NotificationChannel.SLACK,
-          dedupeKey: `ticket:ticket-1:closed:${
-            where.id === 'closed-email' ? 'email' : 'slack'
-          }`,
-          id: where.id,
-          type: NotificationType.TICKET_CLOSED,
-        }),
-      ),
-    );
+    db.notificationOutbox.findUnique.mockImplementation(({ where }) => {
+      const record = claimedRecord({
+        channel:
+          where.id === 'closed-email'
+            ? NotificationChannel.EMAIL
+            : NotificationChannel.SLACK,
+        dedupeKey: `ticket:ticket-1:closed:${
+          where.id === 'closed-email' ? 'email' : 'slack'
+        }`,
+        createdAt: closedAt,
+        id: where.id,
+        type: NotificationType.TICKET_CLOSED,
+      });
+      record.ticket = {
+        ...(record.ticket as Record<string, unknown>),
+        closedAt: new Date('2026-08-07T05:00:00.000Z'),
+      };
+      return Promise.resolve(record);
+    });
 
     await service.dispatch(['closed-email', 'closed-slack']);
 
@@ -351,14 +486,16 @@ describe('NotificationOutboxService delivery', () => {
     db.notificationOutbox.findUnique.mockResolvedValue(
       claimedRecord({ attempts, id: 'failed-email' }),
     );
-    eventBus.sendSupportEmail.mockRejectedValue(new Error('remote failure'));
+    eventBus.sendSupportEmail.mockRejectedValue(
+      new IntegrationDeliveryError('bus_api_http_403'),
+    );
 
     await expect(service.dispatch(['failed-email'])).resolves.toBeUndefined();
 
     expect(db.notificationOutbox.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
-          lastError: expect.not.stringContaining('remote failure'),
+          lastError: expect.stringContaining('bus_api_http_403'),
           status: expectedStatus,
         }),
         where: expect.objectContaining({

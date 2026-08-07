@@ -1,0 +1,1 @@
+ALTER TYPE "support"."NotificationType" ADD VALUE IF NOT EXISTS 'TICKET_REOPENED';

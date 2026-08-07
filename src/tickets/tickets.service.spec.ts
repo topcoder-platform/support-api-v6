@@ -115,6 +115,7 @@ function createHarness() {
     queueTicketClosed: jest.fn().mockResolvedValue([]),
     queueTicketOpened: jest.fn().mockResolvedValue([]),
     queueTicketReplied: jest.fn().mockResolvedValue([]),
+    queueTicketReopened: jest.fn().mockResolvedValue([]),
   };
   const service = new TicketsService(
     db as unknown as DbService,
@@ -307,7 +308,70 @@ describe('TicketsService', () => {
     expect(notificationOutbox.dispatch).toHaveBeenCalledWith(['reply-email']);
   });
 
-  it('rejects replies to a closed ticket before writing or notifying', async () => {
+  it('atomically reopens a closed ticket when its member replies', async () => {
+    const { notificationOutbox, service, tx } = createHarness();
+    tx.supportTicket.findUnique.mockResolvedValue({
+      memberUserId: member.userId,
+      status: TicketStatus.CLOSED,
+    });
+    tx.supportResponse.create.mockResolvedValue({ id: 'response-reopen' });
+    notificationOutbox.queueTicketReopened.mockResolvedValue([
+      'reopened-email',
+      'reopened-slack',
+    ]);
+
+    await service.addResponse(member, 'ticket-1', {
+      markdown: 'The issue has returned.',
+    });
+
+    expect(tx.supportTicket.updateMany).toHaveBeenCalledWith({
+      data: {
+        closedAt: null,
+        closedByUserId: null,
+        status: TicketStatus.OPEN,
+        updatedAt: expect.any(Date),
+      },
+      where: { id: 'ticket-1', status: TicketStatus.CLOSED },
+    });
+    expect(notificationOutbox.queueTicketReopened).toHaveBeenCalledWith(
+      tx,
+      'ticket-1',
+      'response-reopen',
+    );
+    expect(notificationOutbox.dispatch).toHaveBeenCalledWith([
+      'reopened-email',
+      'reopened-slack',
+    ]);
+    expect(notificationOutbox.queueTicketReplied).not.toHaveBeenCalled();
+  });
+
+  it('uses ownership to reopen even when the member also has Support Team role', async () => {
+    const { notificationOutbox, service, tx } = createHarness();
+    const supportOwner = createActor({
+      isSupportTeam: true,
+      roles: ['Topcoder User', 'Topcoder Support Team'],
+    });
+    tx.supportTicket.findUnique.mockResolvedValue({
+      memberUserId: supportOwner.userId,
+      status: TicketStatus.CLOSED,
+    });
+    tx.supportResponse.create.mockResolvedValue({
+      id: 'response-owner-reopen',
+    });
+
+    await service.addResponse(supportOwner, 'ticket-1', {
+      markdown: 'Owner follow-up.',
+    });
+
+    expect(notificationOutbox.queueTicketReopened).toHaveBeenCalledWith(
+      tx,
+      'ticket-1',
+      'response-owner-reopen',
+    );
+    expect(notificationOutbox.queueTicketReplied).not.toHaveBeenCalled();
+  });
+
+  it('rejects a non-owner Support Team reply while a ticket is closed', async () => {
     const { notificationOutbox, service, tx } = createHarness();
     tx.supportTicket.findUnique.mockResolvedValue({
       memberUserId: member.userId,
@@ -315,10 +379,108 @@ describe('TicketsService', () => {
     });
 
     await expect(
-      service.addResponse(member, 'ticket-1', { markdown: 'One more detail.' }),
+      service.addResponse(support, 'ticket-1', {
+        markdown: 'Staff follow-up while closed.',
+      }),
     ).rejects.toBeInstanceOf(ConflictException);
     expect(tx.supportResponse.create).not.toHaveBeenCalled();
+    expect(notificationOutbox.queueTicketReopened).not.toHaveBeenCalled();
     expect(notificationOutbox.queueTicketReplied).not.toHaveBeenCalled();
+  });
+
+  it('forbids another ordinary member from reopening a closed ticket', async () => {
+    const { notificationOutbox, service, tx } = createHarness();
+    const otherMember = createActor({ userId: 'member-2' });
+    tx.supportTicket.findUnique.mockResolvedValue({
+      memberUserId: member.userId,
+      status: TicketStatus.CLOSED,
+    });
+
+    await expect(
+      service.addResponse(otherMember, 'ticket-1', {
+        markdown: 'Unauthorized follow-up.',
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(tx.supportTicket.updateMany).not.toHaveBeenCalled();
+    expect(tx.supportResponse.create).not.toHaveBeenCalled();
+    expect(notificationOutbox.queueTicketReopened).not.toHaveBeenCalled();
+  });
+
+  it('does not write a response when a concurrent reopen transition wins', async () => {
+    const { notificationOutbox, service, tx } = createHarness();
+    tx.supportTicket.findUnique.mockResolvedValue({
+      memberUserId: member.userId,
+      status: TicketStatus.CLOSED,
+    });
+    tx.supportTicket.updateMany.mockResolvedValueOnce({ count: 0 });
+
+    await expect(
+      service.addResponse(member, 'ticket-1', {
+        markdown: 'Concurrent follow-up.',
+      }),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(tx.supportResponse.create).not.toHaveBeenCalled();
+    expect(notificationOutbox.queueTicketReopened).not.toHaveBeenCalled();
+    expect(notificationOutbox.dispatch).not.toHaveBeenCalled();
+  });
+
+  it('queues distinct close transitions around a member reopen', async () => {
+    jest.useFakeTimers();
+    try {
+      const { notificationOutbox, service, tx } = createHarness();
+      tx.supportTicket.findUnique
+        .mockResolvedValueOnce({ status: TicketStatus.OPEN })
+        .mockResolvedValueOnce({
+          memberUserId: member.userId,
+          status: TicketStatus.CLOSED,
+        })
+        .mockResolvedValueOnce({ status: TicketStatus.OPEN });
+      tx.supportResponse.create.mockResolvedValue({ id: 'response-reopen' });
+
+      const firstClosedAt = new Date('2026-08-07T02:00:00.000Z');
+      jest.setSystemTime(firstClosedAt);
+      await service.close(support, 'ticket-1');
+
+      jest.setSystemTime(new Date('2026-08-07T03:00:00.000Z'));
+      await service.addResponse(member, 'ticket-1', {
+        markdown: 'The issue returned.',
+      });
+
+      const secondClosedAt = new Date('2026-08-07T04:00:00.000Z');
+      jest.setSystemTime(secondClosedAt);
+      await service.close(support, 'ticket-1');
+
+      expect(notificationOutbox.queueTicketClosed).toHaveBeenNthCalledWith(
+        1,
+        tx,
+        'ticket-1',
+        expect.any(String),
+      );
+      expect(notificationOutbox.queueTicketReopened).toHaveBeenCalledWith(
+        tx,
+        'ticket-1',
+        'response-reopen',
+      );
+      expect(notificationOutbox.queueTicketClosed).toHaveBeenNthCalledWith(
+        2,
+        tx,
+        'ticket-1',
+        expect.any(String),
+      );
+      const firstCloseEventId =
+        notificationOutbox.queueTicketClosed.mock.calls[0][2];
+      const secondCloseEventId =
+        notificationOutbox.queueTicketClosed.mock.calls[1][2];
+      expect(firstCloseEventId).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+      );
+      expect(secondCloseEventId).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+      );
+      expect(secondCloseEventId).not.toBe(firstCloseEventId);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it('rejects assignment to a closed ticket', async () => {
@@ -361,6 +523,19 @@ describe('TicketsService', () => {
 
     expect(result.status).toBe(TicketStatus.CLOSED);
     expect(tx.supportTicket.updateMany).not.toHaveBeenCalled();
+    expect(notificationOutbox.queueTicketClosed).not.toHaveBeenCalled();
+    expect(notificationOutbox.dispatch).not.toHaveBeenCalled();
+  });
+
+  it('does not create a close event when a concurrent close transition wins', async () => {
+    const { notificationOutbox, service, tx } = createHarness();
+    tx.supportTicket.findUnique.mockResolvedValue({
+      status: TicketStatus.OPEN,
+    });
+    tx.supportTicket.updateMany.mockResolvedValueOnce({ count: 0 });
+
+    await service.close(support, 'ticket-1');
+
     expect(notificationOutbox.queueTicketClosed).not.toHaveBeenCalled();
     expect(notificationOutbox.dispatch).not.toHaveBeenCalled();
   });

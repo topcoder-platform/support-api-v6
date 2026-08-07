@@ -2,6 +2,10 @@ import { HttpService } from '@nestjs/axios';
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { firstValueFrom } from 'rxjs';
+import {
+  integrationDeliveryError,
+  providerDeliveryError,
+} from './integration-delivery.error';
 
 interface SlackApiResponse {
   ok?: boolean;
@@ -36,23 +40,28 @@ export class SlackService {
     const botKey = this.config.get<string>('SLACK_BOT_KEY')?.trim();
     const channel = this.config.get<string>('SLACK_CHANNEL_ID')?.trim();
     if (!botKey || !channel) {
-      throw new Error('Slack support notifications are not configured.');
+      throw providerDeliveryError('slack', 'not_configured');
     }
 
-    const response = await firstValueFrom(
-      this.http.post<SlackApiResponse>(
-        this.endpoint,
-        { channel, text: this.withEnvironmentPrefix(message) },
-        {
-          headers: {
-            Authorization: `Bearer ${botKey}`,
-            'Content-Type': 'application/json; charset=utf-8',
+    let response;
+    try {
+      response = await firstValueFrom(
+        this.http.post<SlackApiResponse>(
+          this.endpoint,
+          { channel, text: this.withEnvironmentPrefix(message) },
+          {
+            headers: {
+              Authorization: `Bearer ${botKey}`,
+              'Content-Type': 'application/json; charset=utf-8',
+            },
           },
-        },
-      ),
-    );
+        ),
+      );
+    } catch (error) {
+      throw integrationDeliveryError('slack', error);
+    }
     if (response.data?.ok !== true) {
-      throw new Error('Slack API rejected the support notification.');
+      throw providerDeliveryError('slack', response.data?.error);
     }
   }
 

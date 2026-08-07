@@ -1,6 +1,7 @@
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { of } from 'rxjs';
+import { IntegrationDeliveryError } from './integration-delivery.error';
 import { SlackService } from './slack.service';
 
 /** Creates a ConfigService test double backed by plain values. */
@@ -59,8 +60,9 @@ describe('SlackService', () => {
       }),
     );
 
-    await expect(service.sendNotification('New ticket')).rejects.toThrow(
-      'Slack API rejected',
-    );
+    await expect(service.sendNotification('New ticket')).rejects.toMatchObject({
+      name: IntegrationDeliveryError.name,
+      safeCode: 'slack_channel_not_found',
+    });
   });
 });

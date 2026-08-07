@@ -48,6 +48,8 @@ commit and retries failed intents with capped exponential backoff.
 - A new ticket emails all users currently assigned the
   `Topcoder Support Team` role and posts to Slack.
 - A Support Team reply emails the member who opened the ticket.
+- A ticket-owner reply to a closed ticket atomically reopens it, emails the
+  Support Team, and posts to Slack.
 - Closing a ticket emails the member and posts to Slack.
 
 Email is published through Bus API v6 to Kafka topic
@@ -90,15 +92,23 @@ See `.env.example` for the complete list. Secrets such as
 `AUTH0_CLIENT_SECRET` and `SLACK_BOT_KEY` must be stored as encrypted values and
 must never be committed.
 
-The three SendGrid dynamic-template IDs are:
+The four SendGrid dynamic-template IDs are:
 
 - `SENDGRID_SUPPORT_NEW_TICKET_TEMPLATE_ID`
 - `SENDGRID_SUPPORT_REPLY_TEMPLATE_ID`
+- `SENDGRID_SUPPORT_REOPENED_TEMPLATE_ID`
 - `SENDGRID_SUPPORT_CLOSED_TEMPLATE_ID`
 
 Every template receives `ticketId`, `ticketUrl`, member/actor handles,
 challenge context, and a bounded plain-text preview. The full markdown body is
-not written to application logs.
+not written to application logs. Known placeholder values such as `REPLACE_ME`
+are rejected before Bus API publication.
+
+Reopened-template data contains `ticketId`, `ticketUrl`, `memberHandle`,
+`challengeId`, `responsePreview`, and `reopenedAt`. Notification failures retain
+only outbox ID, channel, type, attempt, status, and a sanitized integration code;
+provider messages, response bodies, addresses, markdown, and secrets are not
+written to the database or logs.
 
 ## Deployment
 

@@ -2,6 +2,10 @@ import { HttpService } from '@nestjs/axios';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { firstValueFrom } from 'rxjs';
+import {
+  integrationDeliveryError,
+  providerDeliveryError,
+} from './integration-delivery.error';
 import { M2mService } from './m2m.service';
 
 export const SUPPORT_TEAM_ROLE_NAME = 'Topcoder Support Team';
@@ -53,15 +57,20 @@ export class IdentityService {
     userId: string,
   ): Promise<IdentityUserSnapshot | undefined> {
     const normalizedUserId = this.numericUserId(userId);
-    const response = await firstValueFrom(
-      this.http.get(this.buildUrl('/users'), {
-        headers: await this.authorizationHeaders(),
-        params: {
-          filter: `id=${normalizedUserId}`,
-          selector: 'id,handle,email',
-        },
-      }),
-    );
+    let response;
+    try {
+      response = await firstValueFrom(
+        this.http.get(this.buildUrl('/users'), {
+          headers: await this.authorizationHeaders(),
+          params: {
+            filter: `id=${normalizedUserId}`,
+            selector: 'id,handle,email',
+          },
+        }),
+      );
+    } catch (error) {
+      throw integrationDeliveryError('identity_user', error);
+    }
     const records = this.extractRecords(response.data);
     const exact = records.find(
       (record) => this.scalarString(record['id']) === normalizedUserId,
@@ -77,13 +86,23 @@ export class IdentityService {
    * @throws HTTP and authentication errors or an error when the role is absent.
    */
   async listSupportTeamMembers(): Promise<IdentityRoleMember[]> {
-    const token = await this.m2m.getToken();
-    const roleResponse = await firstValueFrom(
-      this.http.get(this.buildUrl('/roles'), {
-        headers: { Authorization: `Bearer ${token}` },
-        params: { filter: `roleName=${SUPPORT_TEAM_ROLE_NAME}` },
-      }),
-    );
+    let token: string;
+    try {
+      token = await this.m2m.getToken();
+    } catch (error) {
+      throw integrationDeliveryError('identity_token', error);
+    }
+    let roleResponse;
+    try {
+      roleResponse = await firstValueFrom(
+        this.http.get(this.buildUrl('/roles'), {
+          headers: { Authorization: `Bearer ${token}` },
+          params: { filter: `roleName=${SUPPORT_TEAM_ROLE_NAME}` },
+        }),
+      );
+    } catch (error) {
+      throw integrationDeliveryError('identity_roles', error);
+    }
     const roles = this.extractRecords(
       roleResponse.data,
     ) as IdentityRoleRecord[];
@@ -91,7 +110,10 @@ export class IdentityService {
       (role) => role.roleName === SUPPORT_TEAM_ROLE_NAME,
     );
     if (exactRoles.length === 0 || exactRoles[0].id === undefined) {
-      throw new Error('Topcoder Support Team role was not found.');
+      throw providerDeliveryError(
+        'identity_roles',
+        'support_team_role_not_found',
+      );
     }
     if (exactRoles.length > 1) {
       this.logger.warn('Multiple exact support-team roles were returned.');
@@ -125,15 +147,20 @@ export class IdentityService {
       expectedTotal === undefined ||
       membersByUserId.size < expectedTotal
     ) {
-      const response = await firstValueFrom(
-        this.http.get(
-          this.buildUrl(`/roles/${encodeURIComponent(roleId)}/subjects`),
-          {
-            headers: { Authorization: `Bearer ${token}` },
-            params: { page, perPage },
-          },
-        ),
-      );
+      let response;
+      try {
+        response = await firstValueFrom(
+          this.http.get(
+            this.buildUrl(`/roles/${encodeURIComponent(roleId)}/subjects`),
+            {
+              headers: { Authorization: `Bearer ${token}` },
+              params: { page, perPage },
+            },
+          ),
+        );
+      } catch (error) {
+        throw integrationDeliveryError('identity_role_subjects', error);
+      }
       const records = this.extractRecords(response.data);
       for (const record of records) {
         const snapshot = this.toUserSnapshot(record);

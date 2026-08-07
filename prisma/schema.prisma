@@ -25,6 +25,7 @@ enum NotificationChannel {
 enum NotificationType {
   TICKET_OPENED
   TICKET_REPLIED
+  TICKET_REOPENED
   TICKET_CLOSED
 
   @@schema("support")
