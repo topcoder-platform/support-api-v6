@@ -105,7 +105,8 @@ export class TicketsController {
   }
 
   /**
-   * Appends a markdown response to an open ticket.
+   * Appends a markdown response. A ticket owner replying while closed reopens
+   * the ticket; Support Team users may reply only while the ticket is open.
    *
    * @param actor Authenticated Topcoder user.
    * @param ticketId Ticket UUID.
@@ -113,9 +114,14 @@ export class TicketsController {
    * @returns Updated ticket detail.
    */
   @Post(':ticketId/responses')
-  @ApiOperation({ summary: 'Reply to an open support ticket' })
+  @ApiOperation({
+    summary: 'Reply to a support ticket, reopening it for the owner if closed',
+  })
   @ApiCreatedResponse({ type: TicketDetailDto })
-  @ApiConflictResponse({ description: 'The ticket is already closed.' })
+  @ApiConflictResponse({
+    description:
+      'A non-owner tried to reply while closed, or the ticket status changed concurrently.',
+  })
   @ApiForbiddenResponse({
     description: 'The caller cannot reply to this ticket.',
   })

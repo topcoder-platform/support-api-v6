@@ -2,7 +2,10 @@ import { Transform } from 'class-transformer';
 import { IsString, MaxLength, MinLength } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
-/** Request body used to add a markdown response to an open ticket. */
+/**
+ * Request body used to add a markdown response. An owner response may also
+ * reopen the owner's closed ticket.
+ */
 export class CreateResponseDto {
   @ApiProperty({
     description: 'Markdown response body.',

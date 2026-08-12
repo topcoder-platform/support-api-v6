@@ -6,10 +6,14 @@ import type {
   BusApiEvent,
 } from 'tc-bus-api-wrapper';
 import createBusApiClient from 'tc-bus-api-wrapper';
+import {
+  integrationDeliveryError,
+  providerDeliveryError,
+} from './integration-delivery.error';
 
 export const BUS_API_CLIENT = Symbol('BUS_API_CLIENT');
 
-export type SupportEmailType = 'opened' | 'replied' | 'closed';
+export type SupportEmailType = 'opened' | 'replied' | 'reopened' | 'closed';
 
 interface SupportEmailPayload {
   recipients: string[];
@@ -21,8 +25,16 @@ interface SupportEmailPayload {
 const TEMPLATE_KEYS: Record<SupportEmailType, string> = {
   opened: 'SENDGRID_SUPPORT_NEW_TICKET_TEMPLATE_ID',
   replied: 'SENDGRID_SUPPORT_REPLY_TEMPLATE_ID',
+  reopened: 'SENDGRID_SUPPORT_REOPENED_TEMPLATE_ID',
   closed: 'SENDGRID_SUPPORT_CLOSED_TEMPLATE_ID',
 };
+
+const TEMPLATE_PLACEHOLDERS = new Set([
+  'change_me',
+  'replace_me',
+  'tbd',
+  'todo',
+]);
 
 /**
  * Creates the shared Bus API client with a strictly v6 base URL.
@@ -138,11 +150,11 @@ export class EventBusService {
       ),
     );
     if (normalizedRecipients.length === 0) {
-      throw new Error('Support email has no eligible recipients.');
+      throw providerDeliveryError('email', 'no_eligible_recipients');
     }
     const templateId = this.config.get<string>(TEMPLATE_KEYS[type])?.trim();
-    if (!templateId) {
-      throw new Error(`Support email template is not configured for ${type}.`);
+    if (!templateId || TEMPLATE_PLACEHOLDERS.has(templateId.toLowerCase())) {
+      throw providerDeliveryError('email', 'template_unconfigured');
     }
 
     const payload: SupportEmailPayload = {
@@ -158,6 +170,10 @@ export class EventBusService {
       'mime-type': 'application/json',
       payload,
     };
-    await this.client.postEvent(event);
+    try {
+      await this.client.postEvent(event);
+    } catch (error) {
+      throw integrationDeliveryError('bus_api', error);
+    }
   }
 }

@@ -5,6 +5,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
 import { Prisma, TicketStatus } from '@prisma/client';
 import { SupportActor } from '../auth/auth.types';
 import { DbService } from '../db/db.service';
@@ -216,11 +217,13 @@ export class TicketsService {
   }
 
   /**
-   * Adds a chronological markdown response to an open ticket.
+   * Adds a chronological markdown response to an open ticket. The ticket owner
+   * may also reply to a closed ticket, atomically reopening it and notifying
+   * Support Team; non-owner Support Team actors cannot reply while it is closed.
    *
    * The response author is marked as having read their new response. Support
    * Team responses queue an email intent for the member in the same transaction;
-   * member responses intentionally do not queue that email.
+   * ordinary member responses on an already-open ticket do not queue an email.
    *
    * @param actor authenticated owner or Support Team responder.
    * @param ticketId target support ticket UUID.
@@ -228,7 +231,7 @@ export class TicketsService {
    * @returns updated full ticket detail.
    * @throws NotFoundException when the ticket does not exist.
    * @throws ForbiddenException when the actor cannot access the ticket.
-   * @throws ConflictException when the ticket is already closed.
+   * @throws ConflictException when a non-owner replies to a closed ticket or a concurrent status transition wins.
    */
   async addResponse(
     actor: SupportActor,
@@ -248,20 +251,33 @@ export class TicketsService {
         throw new NotFoundException('Support ticket not found.');
       }
       this.assertCanAccess(actor, ticket.memberUserId);
-      if (ticket.status === TicketStatus.CLOSED) {
+      const isTicketOwner = actor.userId === ticket.memberUserId;
+      const reopensTicket =
+        ticket.status === TicketStatus.CLOSED && isTicketOwner;
+      if (ticket.status === TicketStatus.CLOSED && !reopensTicket) {
         throw new ConflictException(
-          'Closed support tickets cannot be updated.',
+          'Only the ticket member can reopen a closed support ticket.',
         );
       }
 
       const createdAt = new Date();
-      const openUpdate = await tx.supportTicket.updateMany({
-        data: { updatedAt: createdAt },
-        where: { id: ticketId, status: TicketStatus.OPEN },
+      const statusUpdate = await tx.supportTicket.updateMany({
+        data: reopensTicket
+          ? {
+              closedAt: null,
+              closedByUserId: null,
+              status: TicketStatus.OPEN,
+              updatedAt: createdAt,
+            }
+          : { updatedAt: createdAt },
+        where: {
+          id: ticketId,
+          status: reopensTicket ? TicketStatus.CLOSED : TicketStatus.OPEN,
+        },
       });
-      if (openUpdate.count !== 1) {
+      if (statusUpdate.count !== 1) {
         throw new ConflictException(
-          'Closed support tickets cannot be updated.',
+          'The support ticket status changed; reload it before replying.',
         );
       }
 
@@ -285,7 +301,14 @@ export class TicketsService {
         where: { ticketId_userId: { ticketId, userId: actor.userId } },
       });
 
-      if (actor.isSupportTeam && actor.userId !== ticket.memberUserId) {
+      if (reopensTicket) {
+        return this.notificationOutbox.queueTicketReopened(
+          tx,
+          ticketId,
+          response.id,
+        );
+      }
+      if (actor.isSupportTeam && !isTicketOwner) {
         return this.notificationOutbox.queueTicketReplied(
           tx,
           ticketId,
@@ -512,7 +535,12 @@ export class TicketsService {
         update: { lastReadAt: closedAt },
         where: { ticketId_userId: { ticketId, userId: actor.userId } },
       });
-      return this.notificationOutbox.queueTicketClosed(tx, ticketId);
+      const closeEventId = randomUUID();
+      return this.notificationOutbox.queueTicketClosed(
+        tx,
+        ticketId,
+        closeEventId,
+      );
     });
 
     await this.dispatchAfterCommit(notificationIds);

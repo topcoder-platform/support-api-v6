@@ -1,6 +1,6 @@
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
-import { of } from 'rxjs';
+import { of, throwError } from 'rxjs';
 import { IdentityService } from './identity.service';
 import { M2mService } from './m2m.service';
 
@@ -106,6 +106,22 @@ describe('IdentityService', () => {
     expect(http.get).toHaveBeenCalledWith('https://api.topcoder.com/v6/users', {
       headers: { Authorization: 'Bearer m2m-token' },
       params: { filter: 'id=1234', selector: 'id,handle,email' },
+    });
+  });
+
+  it('sanitizes a Support Team role lookup failure to stage and status', async () => {
+    const { http, service } = createHarness();
+    http.get.mockReturnValue(
+      throwError(() =>
+        Object.assign(
+          new Error('Bearer secret and support-team response body'),
+          { response: { status: 403 } },
+        ),
+      ),
+    );
+
+    await expect(service.listSupportTeamMembers()).rejects.toMatchObject({
+      safeCode: 'identity_roles_http_403',
     });
   });
 });
