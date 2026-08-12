@@ -123,10 +123,9 @@ shared Topcoder deployment suite with `APPNAME=support-api-v6` and platform
 The pipeline deploys to an existing ECS service; it intentionally does not
 provision infrastructure. Before the first deployment, operations must provide
 the ECR repository, ECS service/task family, target group, database and secret,
-and SSM values. Run a controlled one-off task from the released image with
-`./node_modules/.bin/prisma migrate deploy`; the image includes the CLI and
-migrations for that purpose. API Gateway must map `/v6/support` to the target
-group.
+and SSM values. Container startup applies pending Prisma migrations before the
+API process starts; Prisma's advisory lock keeps concurrent ECS task starts
+safe. API Gateway must map `/v6/support` to the target group.
 
 Serving Platform UI at `support.topcoder.com` is a separate infrastructure
 step: configure DNS, certificate, CloudFront alternate domain and SPA fallback,
