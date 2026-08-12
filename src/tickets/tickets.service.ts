@@ -219,7 +219,8 @@ export class TicketsService {
   /**
    * Adds a chronological markdown response to an open ticket. The ticket owner
    * may also reply to a closed ticket, atomically reopening it and notifying
-   * Support Team; non-owner Support Team actors cannot reply while it is closed.
+   * Support Team; non-owner Support Team actors must be assigned and cannot
+   * reply while it is closed.
    *
    * The response author is marked as having read their new response. Support
    * Team responses queue an email intent for the member in the same transaction;
@@ -230,7 +231,7 @@ export class TicketsService {
    * @param dto validated markdown response body.
    * @returns updated full ticket detail.
    * @throws NotFoundException when the ticket does not exist.
-   * @throws ForbiddenException when the actor cannot access the ticket.
+   * @throws ForbiddenException when the actor cannot access the ticket or an unassigned Support Team actor replies.
    * @throws ConflictException when a non-owner replies to a closed ticket or a concurrent status transition wins.
    */
   async addResponse(
@@ -244,7 +245,14 @@ export class TicketsService {
     );
     const notificationIds = await this.db.$transaction(async (tx) => {
       const ticket = await tx.supportTicket.findUnique({
-        select: { memberUserId: true, status: true },
+        select: {
+          assignees: {
+            select: { userId: true },
+            where: { userId: actor.userId },
+          },
+          memberUserId: true,
+          status: true,
+        },
         where: { id: ticketId },
       });
       if (!ticket) {
@@ -257,6 +265,15 @@ export class TicketsService {
       if (ticket.status === TicketStatus.CLOSED && !reopensTicket) {
         throw new ConflictException(
           'Only the ticket member can reopen a closed support ticket.',
+        );
+      }
+      if (
+        actor.isSupportTeam &&
+        !isTicketOwner &&
+        ticket.assignees.length === 0
+      ) {
+        throw new ForbiddenException(
+          'Assign this support ticket to yourself before replying.',
         );
       }
 

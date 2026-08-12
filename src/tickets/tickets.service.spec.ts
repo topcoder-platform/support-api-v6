@@ -290,6 +290,7 @@ describe('TicketsService', () => {
   it('queues and dispatches the member email for a support-authored reply', async () => {
     const { notificationOutbox, service, tx } = createHarness();
     tx.supportTicket.findUnique.mockResolvedValue({
+      assignees: [{ userId: support.userId }],
       memberUserId: member.userId,
       status: TicketStatus.OPEN,
     });
@@ -306,6 +307,27 @@ describe('TicketsService', () => {
       'response-2',
     );
     expect(notificationOutbox.dispatch).toHaveBeenCalledWith(['reply-email']);
+  });
+
+  it('rejects an unassigned support-authored reply before writing or notifying', async () => {
+    const { notificationOutbox, service, tx } = createHarness();
+    tx.supportTicket.findUnique.mockResolvedValue({
+      assignees: [],
+      memberUserId: member.userId,
+      status: TicketStatus.OPEN,
+    });
+
+    await expect(
+      service.addResponse(support, 'ticket-1', {
+        markdown: 'An unassigned support reply.',
+      }),
+    ).rejects.toMatchObject({
+      message: 'Assign this support ticket to yourself before replying.',
+    });
+    expect(tx.supportTicket.updateMany).not.toHaveBeenCalled();
+    expect(tx.supportResponse.create).not.toHaveBeenCalled();
+    expect(notificationOutbox.queueTicketReplied).not.toHaveBeenCalled();
+    expect(notificationOutbox.dispatch).not.toHaveBeenCalled();
   });
 
   it('atomically reopens a closed ticket when its member replies', async () => {

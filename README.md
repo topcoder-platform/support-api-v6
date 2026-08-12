@@ -12,7 +12,8 @@ The service mounts all operations below `/v6/support`:
 - `GET /v6/support/tickets` — list the member's tickets, or all tickets for a
   user with the `Topcoder Support Team` role
 - `GET /v6/support/tickets/:ticketId` — get an authorized ticket timeline
-- `POST /v6/support/tickets/:ticketId/responses` — add a reply
+- `POST /v6/support/tickets/:ticketId/responses` — add a member reply, or an
+  assigned Support Team reply
 - `POST /v6/support/tickets/:ticketId/read` — mark the ticket and current
   replies read
 - `POST|DELETE /v6/support/tickets/:ticketId/assignees/me` — assign or

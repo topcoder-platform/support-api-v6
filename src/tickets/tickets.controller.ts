@@ -106,7 +106,8 @@ export class TicketsController {
 
   /**
    * Appends a markdown response. A ticket owner replying while closed reopens
-   * the ticket; Support Team users may reply only while the ticket is open.
+   * the ticket; Support Team users may reply only while assigned to an open
+   * ticket.
    *
    * @param actor Authenticated Topcoder user.
    * @param ticketId Ticket UUID.
@@ -123,7 +124,8 @@ export class TicketsController {
       'A non-owner tried to reply while closed, or the ticket status changed concurrently.',
   })
   @ApiForbiddenResponse({
-    description: 'The caller cannot reply to this ticket.',
+    description:
+      'The caller cannot reply to this ticket or is an unassigned Support Team user.',
   })
   async addResponse(
     @CurrentActor() actor: SupportActor,
