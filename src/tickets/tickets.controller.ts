@@ -197,7 +197,7 @@ export class TicketsController {
   }
 
   /**
-   * Closes an open ticket as a Support Team user.
+   * Closes an open ticket assigned to the current Support Team user.
    *
    * @param actor Authenticated Topcoder support user.
    * @param ticketId Ticket UUID.
@@ -208,7 +208,8 @@ export class TicketsController {
   @ApiOperation({ summary: 'Close a resolved support ticket' })
   @ApiOkResponse({ type: TicketDetailDto })
   @ApiForbiddenResponse({
-    description: 'The caller is not on the Support Team.',
+    description:
+      'The caller is not on the Support Team or is not assigned to the ticket.',
   })
   async close(
     @CurrentActor() actor: SupportActor,
