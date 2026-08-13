@@ -28,6 +28,81 @@ cannot expand visibility by supplying another member ID or a staff-only filter.
 Role checks for `Topcoder Support Team` are case-insensitive, while preserving
 the role as one multi-word value.
 
+## Opportunities: Contact the team contract
+
+The Opportunities challenge-detail **Contact the team** dialog uses the
+existing ticket-creation operation; it must not introduce another support
+route:
+
+```http
+POST /v6/support/tickets
+Authorization: Bearer <Topcoder member JWT>
+Content-Type: application/json
+```
+
+```json
+{
+  "challengeId": "9f20b3ef-b052-4a0f-bfec-9a92ff385b0b",
+  "description": "## Submission issue\n\nMy upload stalls after screening. [Diagnostic details](https://example.com/diagnostic)."
+}
+```
+
+The JSON body contains only:
+
+- `description` (required): Markdown text, trimmed by the API, from 1 through
+  50,000 characters.
+- `challengeId` (optional): the current v5 numeric or v6 UUID challenge ID, at
+  most 64 characters and containing only letters, numbers, `_`, or `-`.
+
+There is intentionally no subject, category, or files field. The Platform UI
+should omit those controls and fields. Images or other assets inserted by the
+Markdown editor are represented by their uploaded URLs in `description`; this
+operation accepts JSON only and does not accept multipart uploads or attachment
+metadata. Unknown fields such as `subject`, `category`, or `files` are rejected
+with HTTP 400.
+
+A successful request returns HTTP 201 with the newly created authorized ticket
+detail. The ticket is open, owned by the JWT member, marked read for that member,
+and initially has no replies or assignees:
+
+```json
+{
+  "id": "82982c2e-c9b2-4874-823d-5ef53e6569a4",
+  "memberUserId": "123456",
+  "memberHandle": "member_handle",
+  "memberHandleColor": "#2D7E2D",
+  "challengeId": "9f20b3ef-b052-4a0f-bfec-9a92ff385b0b",
+  "description": "## Submission issue\n\nMy upload stalls after screening. [Diagnostic details](https://example.com/diagnostic).",
+  "status": "OPEN",
+  "openedAt": "2026-08-13T01:23:45.000Z",
+  "updatedAt": "2026-08-13T01:23:45.000Z",
+  "latestActivityAt": "2026-08-13T01:23:45.000Z",
+  "responseCount": 0,
+  "hasUnread": false,
+  "assignees": [],
+  "readBy": [
+    {
+      "userId": "123456",
+      "readAt": "2026-08-13T01:23:45.000Z"
+    }
+  ],
+  "responses": []
+}
+```
+
+Expected failure responses are:
+
+- HTTP 400 for a missing, blank, non-string, or over-length `description`; an
+  invalid `challengeId`; malformed JSON; or any unrecognized body field.
+- HTTP 401 for a missing or invalid bearer token, or a human token without a
+  user ID.
+- HTTP 403 for a machine-to-machine token. This is a member-authored workflow.
+- HTTP 5xx when a required Identity, database, or notification-enqueue
+  dependency fails. The UI should keep the Markdown draft available for retry.
+
+Notification delivery after the database commit is retried asynchronously and
+does not turn an otherwise successful HTTP 201 response into a failure.
+
 ## Data model and unread behavior
 
 Prisma owns a dedicated PostgreSQL `support` schema. The initial migration
