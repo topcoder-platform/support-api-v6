@@ -18,7 +18,8 @@ The service mounts all operations below `/v6/support`:
   replies read
 - `POST|DELETE /v6/support/tickets/:ticketId/assignees/me` — assign or
   unassign the current Support Team user
-- `POST /v6/support/tickets/:ticketId/close` — close a ticket as Support Team
+- `POST /v6/support/tickets/:ticketId/close` — close a ticket assigned to the
+  current Support Team user
 
 Interactive OpenAPI documentation is served at
 `/v6/support/api-docs`.
@@ -33,6 +34,7 @@ the role as one multi-word value.
 Prisma owns a dedicated PostgreSQL `support` schema. The initial migration
 creates tickets, chronologically ordered responses, many-to-many assignees,
 ticket read states, response read receipts, and a notification outbox.
+Closed ticket responses include the stored closer user ID for audit display.
 
 An absent receipt means unread. List responses compare the caller's
 `lastReadAt` with the latest request, response, or close activity. Opening or

@@ -40,6 +40,7 @@ function createTicketRecord(
     assignees: [],
     challengeId: null,
     closedAt: null,
+    closedByUserId: null,
     description: 'The challenge submission is unavailable.',
     id: 'ticket-1',
     memberHandle: 'member_one',
@@ -67,6 +68,7 @@ function createTicketRecord(
  */
 function createHarness() {
   const tx = {
+    $queryRaw: jest.fn().mockResolvedValue([]),
     responseReadReceipt: {
       createMany: jest.fn().mockResolvedValue({ count: 0 }),
       updateMany: jest.fn().mockResolvedValue({ count: 0 }),
@@ -451,12 +453,18 @@ describe('TicketsService', () => {
     try {
       const { notificationOutbox, service, tx } = createHarness();
       tx.supportTicket.findUnique
-        .mockResolvedValueOnce({ status: TicketStatus.OPEN })
+        .mockResolvedValueOnce({
+          assignees: [{ userId: support.userId }],
+          status: TicketStatus.OPEN,
+        })
         .mockResolvedValueOnce({
           memberUserId: member.userId,
           status: TicketStatus.CLOSED,
         })
-        .mockResolvedValueOnce({ status: TicketStatus.OPEN });
+        .mockResolvedValueOnce({
+          assignees: [{ userId: support.userId }],
+          status: TicketStatus.OPEN,
+        });
       tx.supportResponse.create.mockResolvedValue({ id: 'response-reopen' });
 
       const firstClosedAt = new Date('2026-08-07T02:00:00.000Z');
@@ -472,6 +480,13 @@ describe('TicketsService', () => {
       jest.setSystemTime(secondClosedAt);
       await service.close(support, 'ticket-1');
 
+      expect(tx.supportTicket.updateMany).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          closedByUserId: support.userId,
+          status: TicketStatus.CLOSED,
+        }),
+        where: { id: 'ticket-1', status: TicketStatus.OPEN },
+      });
       expect(notificationOutbox.queueTicketClosed).toHaveBeenNthCalledWith(
         1,
         tx,
@@ -518,6 +533,25 @@ describe('TicketsService', () => {
     expect(tx.ticketAssignee.upsert).not.toHaveBeenCalled();
   });
 
+  it('locks the ticket before unassigning to serialize against closure', async () => {
+    const { service, tx } = createHarness();
+    tx.supportTicket.findUnique.mockResolvedValue({
+      status: TicketStatus.OPEN,
+    });
+
+    await service.unassignMe(support, 'ticket-1');
+
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+    const lockQuery = tx.$queryRaw.mock.calls[0][0] as { strings: string[] };
+    expect(lockQuery.strings.join('')).toContain('FOR UPDATE');
+    expect(tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      tx.supportTicket.findUnique.mock.invocationCallOrder[0],
+    );
+    expect(tx.ticketAssignee.deleteMany).toHaveBeenCalledWith({
+      where: { ticketId: 'ticket-1', userId: support.userId },
+    });
+  });
+
   it('role-gates both assignment and ticket closure', async () => {
     const { db, memberDirectory, service } = createHarness();
 
@@ -531,19 +565,48 @@ describe('TicketsService', () => {
     expect(db.$transaction).not.toHaveBeenCalled();
   });
 
+  it('rejects closure by unassigned support before writing or notifying', async () => {
+    const { db, notificationOutbox, service, tx } = createHarness();
+    tx.supportTicket.findUnique.mockResolvedValue({
+      assignees: [],
+      status: TicketStatus.OPEN,
+    });
+
+    await expect(service.close(support, 'ticket-1')).rejects.toMatchObject({
+      message: 'Assign this support ticket to yourself before closing it.',
+    });
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+    const lockQuery = tx.$queryRaw.mock.calls[0][0] as { strings: string[] };
+    expect(lockQuery.strings.join('')).toContain('FOR UPDATE');
+    expect(tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      tx.supportTicket.findUnique.mock.invocationCallOrder[0],
+    );
+    expect(tx.supportTicket.updateMany).not.toHaveBeenCalled();
+    expect(tx.ticketReadState.upsert).not.toHaveBeenCalled();
+    expect(notificationOutbox.queueTicketClosed).not.toHaveBeenCalled();
+    expect(notificationOutbox.dispatch).not.toHaveBeenCalled();
+    expect(db.supportTicket.findUnique).not.toHaveBeenCalled();
+  });
+
   it('treats an already-closed ticket as idempotent without enqueueing again', async () => {
     const { db, notificationOutbox, service, tx } = createHarness();
     const closedAt = new Date('2026-08-07T02:00:00.000Z');
     tx.supportTicket.findUnique.mockResolvedValue({
+      assignees: [],
       status: TicketStatus.CLOSED,
     });
     db.supportTicket.findUnique.mockResolvedValue(
-      createTicketRecord({ closedAt, status: TicketStatus.CLOSED }),
+      createTicketRecord({
+        closedAt,
+        closedByUserId: support.userId,
+        status: TicketStatus.CLOSED,
+      }),
     );
 
     const result = await service.close(support, 'ticket-1');
 
     expect(result.status).toBe(TicketStatus.CLOSED);
+    expect(result.closedByUserId).toBe(support.userId);
     expect(tx.supportTicket.updateMany).not.toHaveBeenCalled();
     expect(notificationOutbox.queueTicketClosed).not.toHaveBeenCalled();
     expect(notificationOutbox.dispatch).not.toHaveBeenCalled();
@@ -552,6 +615,7 @@ describe('TicketsService', () => {
   it('does not create a close event when a concurrent close transition wins', async () => {
     const { notificationOutbox, service, tx } = createHarness();
     tx.supportTicket.findUnique.mockResolvedValue({
+      assignees: [{ userId: support.userId }],
       status: TicketStatus.OPEN,
     });
     tx.supportTicket.updateMany.mockResolvedValueOnce({ count: 0 });

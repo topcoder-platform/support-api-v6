@@ -78,6 +78,9 @@ export class TicketSummaryDto {
   @ApiPropertyOptional({ format: 'date-time' })
   closedAt?: Date;
 
+  @ApiPropertyOptional({ example: '123456' })
+  closedByUserId?: string;
+
   @ApiProperty({ format: 'date-time' })
   updatedAt!: Date;
 

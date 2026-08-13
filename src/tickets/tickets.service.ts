@@ -433,6 +433,7 @@ export class TicketsService {
   ): Promise<TicketDetailDto> {
     this.assertSupportTeam(actor);
     await this.db.$transaction(async (tx) => {
+      await this.lockTicket(tx, ticketId);
       const ticket = await tx.supportTicket.findUnique({
         select: { status: true },
         where: { id: ticketId },
@@ -508,7 +509,7 @@ export class TicketsService {
   }
 
   /**
-   * Closes an open ticket as the authenticated Support Team member.
+   * Closes an open ticket assigned to the authenticated Support Team member.
    *
    * A conditional update makes concurrent and repeated closes idempotent. Only
    * the transaction that changes OPEN to CLOSED queues close email and Slack
@@ -517,14 +518,22 @@ export class TicketsService {
    * @param actor authenticated Support Team member resolving the ticket.
    * @param ticketId target support ticket UUID.
    * @returns updated full ticket detail.
-   * @throws ForbiddenException when the actor lacks the Support Team role.
+   * @throws ForbiddenException when the actor lacks the Support Team role or
+   * is not assigned to the ticket.
    * @throws NotFoundException when the ticket does not exist.
    */
   async close(actor: SupportActor, ticketId: string): Promise<TicketDetailDto> {
     this.assertSupportTeam(actor);
     const notificationIds = await this.db.$transaction(async (tx) => {
+      await this.lockTicket(tx, ticketId);
       const ticket = await tx.supportTicket.findUnique({
-        select: { status: true },
+        select: {
+          assignees: {
+            select: { userId: true },
+            where: { userId: actor.userId },
+          },
+          status: true,
+        },
         where: { id: ticketId },
       });
       if (!ticket) {
@@ -532,6 +541,11 @@ export class TicketsService {
       }
       if (ticket.status === TicketStatus.CLOSED) {
         return [];
+      }
+      if (ticket.assignees.length === 0) {
+        throw new ForbiddenException(
+          'Assign this support ticket to yourself before closing it.',
+        );
       }
 
       const closedAt = new Date();
@@ -562,6 +576,26 @@ export class TicketsService {
 
     await this.dispatchAfterCommit(notificationIds);
     return this.getById(actor, ticketId);
+  }
+
+  /**
+   * Locks a ticket row so unassignment and closure decisions cannot interleave.
+   *
+   * @param tx active Prisma transaction.
+   * @param ticketId target support ticket UUID.
+   * @returns a promise resolved after PostgreSQL acquires the row lock.
+   * @throws Prisma database errors.
+   */
+  private async lockTicket(
+    tx: Prisma.TransactionClient,
+    ticketId: string,
+  ): Promise<void> {
+    await tx.$queryRaw(Prisma.sql`
+      SELECT "id"
+      FROM "support"."support_tickets"
+      WHERE "id" = ${ticketId}::uuid
+      FOR UPDATE
+    `);
   }
 
   /**
@@ -639,6 +673,7 @@ export class TicketsService {
       assignees: record.assignees.map((assignee) => this.toAssignee(assignee)),
       challengeId: record.challengeId ?? undefined,
       closedAt: record.closedAt ?? undefined,
+      closedByUserId: record.closedByUserId ?? undefined,
       description: record.description,
       hasUnread:
         !actorReadState || actorReadState.lastReadAt < latestActivityAt,
@@ -678,6 +713,7 @@ export class TicketsService {
       assignees: record.assignees.map((assignee) => this.toAssignee(assignee)),
       challengeId: record.challengeId ?? undefined,
       closedAt: record.closedAt ?? undefined,
+      closedByUserId: record.closedByUserId ?? undefined,
       description: record.description,
       hasUnread:
         !actorReadState || actorReadState.lastReadAt < latestActivityAt,
