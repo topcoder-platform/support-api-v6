@@ -343,7 +343,9 @@ export class TicketsService {
    * Adds the authenticated Support Team member to an open ticket's assignees.
    *
    * The composite ticket/user key and Prisma upsert make repeated assignment
-   * calls idempotent while preserving the original assignment timestamp.
+   * calls idempotent while preserving the original assignment timestamp. A new
+   * assignment also queues a Slack notification so the rest of the Support Team
+   * sees who picked the ticket up.
    *
    * @param actor authenticated Support Team member assigning themselves.
    * @param ticketId target support ticket UUID.
@@ -362,7 +364,7 @@ export class TicketsService {
       actor.handle,
     );
 
-    await this.db.$transaction(async (tx) => {
+    const notificationIds = await this.db.$transaction(async (tx) => {
       const ticket = await tx.supportTicket.findUnique({
         select: {
           assignees: {
@@ -382,7 +384,7 @@ export class TicketsService {
         );
       }
       if (ticket.assignees.length > 0) {
-        return;
+        return [];
       }
 
       const assignedAt = new Date();
@@ -410,8 +412,15 @@ export class TicketsService {
         },
         where: { ticketId_userId: { ticketId, userId: actor.userId } },
       });
+      return this.notificationOutbox.queueTicketAssigned(
+        tx,
+        ticketId,
+        snapshot.handle,
+        randomUUID(),
+      );
     });
 
+    await this.dispatchAfterCommit(notificationIds);
     return this.getById(actor, ticketId);
   }
 

@@ -32,7 +32,8 @@ export class SlackService {
    * Posts one plain support notification and validates Slack's JSON success
    * flag, which can indicate failure even on HTTP 200.
    *
-   * @param message safe notification text; ticket markdown must not be supplied.
+   * @param message safe multi-line notification text; raw ticket markdown must
+   *   not be supplied, only sanitized and bounded previews of it.
    * @returns a promise resolved after Slack accepts the message.
    * @throws Error when configuration is missing or Slack returns `ok: false`.
    */

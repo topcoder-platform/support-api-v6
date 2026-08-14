@@ -24,6 +24,7 @@ function claimedRecord(
   overrides: Record<string, unknown> = {},
 ): Record<string, unknown> {
   return {
+    assigneeHandle: null,
     attempts: 1,
     channel: NotificationChannel.EMAIL,
     createdAt: openedAt,
@@ -193,6 +194,32 @@ describe('NotificationOutboxService enqueue', () => {
     expect(new Set(dedupeKeys)).toHaveProperty('size', dedupeKeys.length);
   });
 
+  it('queues one Slack intent carrying the assignee handle per assignment', async () => {
+    const { service, tx } = createHarness();
+    tx.notificationOutbox.findMany.mockResolvedValue([{ id: 'assign-outbox' }]);
+
+    await expect(
+      service.queueTicketAssigned(
+        tx as unknown as Prisma.TransactionClient,
+        'ticket-1',
+        'support_one',
+        'assign-event-1',
+      ),
+    ).resolves.toEqual(['assign-outbox']);
+    expect(tx.notificationOutbox.createMany).toHaveBeenCalledWith({
+      data: [
+        {
+          assigneeHandle: 'support_one',
+          channel: NotificationChannel.SLACK,
+          dedupeKey: 'ticket:ticket-1:assigned:assign-event-1:slack',
+          ticketId: 'ticket-1',
+          type: NotificationType.TICKET_ASSIGNED,
+        },
+      ],
+      skipDuplicates: true,
+    });
+  });
+
   it('propagates enqueue failure so the surrounding domain transaction rolls back', async () => {
     const { service, tx } = createHarness();
     tx.notificationOutbox.createMany.mockRejectedValueOnce(
@@ -337,6 +364,104 @@ describe('NotificationOutboxService delivery', () => {
     expect(db.notificationOutbox.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ status: NotificationStatus.SENT }),
+      }),
+    );
+  });
+
+  it('posts the opened Slack message on multiple lines with a challenge link and body', async () => {
+    const { db, service, slack } = createHarness();
+    db.$queryRaw.mockResolvedValue([{ id: 'opened-slack', lockedAt }]);
+    db.notificationOutbox.findUnique.mockResolvedValue(
+      claimedRecord({
+        channel: NotificationChannel.SLACK,
+        dedupeKey: 'ticket:ticket-1:opened:slack',
+        id: 'opened-slack',
+      }),
+    );
+
+    await service.dispatch(['opened-slack']);
+
+    const message = slack.sendNotification.mock.calls[0][0] as string;
+    const lines = message.split('\n');
+    expect(lines[0]).toBe('New support ticket opened by member_one.');
+    expect(lines[1]).toBe(
+      'Challenge: <https://work.topcoder.com/challenges/challenge-1|challenge-1>',
+    );
+    expect(lines[2]).toBe(
+      'Ticket: https://support.topcoder.com/tickets/ticket-1',
+    );
+    expect(lines[3]).toBe('Request:');
+    expect(lines[4]).toContain('Broken upload');
+    expect(message).not.toContain('secret.example');
+  });
+
+  it('omits the challenge line when the ticket has no challenge', async () => {
+    const { db, service, slack } = createHarness();
+    db.$queryRaw.mockResolvedValue([{ id: 'opened-slack', lockedAt }]);
+    db.notificationOutbox.findUnique.mockImplementation(() => {
+      const record = claimedRecord({
+        channel: NotificationChannel.SLACK,
+        id: 'opened-slack',
+      });
+      record.ticket = {
+        ...(record.ticket as Record<string, unknown>),
+        challengeId: null,
+      };
+      return Promise.resolve(record);
+    });
+
+    await service.dispatch(['opened-slack']);
+
+    const message = slack.sendNotification.mock.calls[0][0] as string;
+    expect(message).not.toContain('Challenge:');
+    expect(message.split('\n')[1]).toBe(
+      'Ticket: https://support.topcoder.com/tickets/ticket-1',
+    );
+  });
+
+  it('posts an assignment Slack message naming the assignee', async () => {
+    const { db, eventBus, service, slack } = createHarness();
+    db.$queryRaw.mockResolvedValue([{ id: 'assigned-slack', lockedAt }]);
+    db.notificationOutbox.findUnique.mockResolvedValue(
+      claimedRecord({
+        assigneeHandle: 'support_one',
+        channel: NotificationChannel.SLACK,
+        dedupeKey: 'ticket:ticket-1:assigned:assign-event-1:slack',
+        id: 'assigned-slack',
+        type: NotificationType.TICKET_ASSIGNED,
+      }),
+    );
+
+    await service.dispatch(['assigned-slack']);
+
+    expect(slack.sendNotification).toHaveBeenCalledWith(
+      'Support ticket for member_one was assigned to support_one.\n' +
+        'Challenge: <https://work.topcoder.com/challenges/challenge-1|challenge-1>\n' +
+        'Ticket: https://support.topcoder.com/tickets/ticket-1',
+    );
+    expect(eventBus.sendSupportEmail).not.toHaveBeenCalled();
+  });
+
+  it('fails an assignment Slack row that lost its assignee handle', async () => {
+    const { db, service, slack } = createHarness();
+    db.$queryRaw.mockResolvedValue([{ id: 'assigned-slack', lockedAt }]);
+    db.notificationOutbox.findUnique.mockResolvedValue(
+      claimedRecord({
+        channel: NotificationChannel.SLACK,
+        id: 'assigned-slack',
+        type: NotificationType.TICKET_ASSIGNED,
+      }),
+    );
+
+    await service.dispatch(['assigned-slack']);
+
+    expect(slack.sendNotification).not.toHaveBeenCalled();
+    expect(db.notificationOutbox.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          lastError: expect.stringContaining('assignee_handle_missing'),
+          status: NotificationStatus.FAILED,
+        }),
       }),
     );
   });

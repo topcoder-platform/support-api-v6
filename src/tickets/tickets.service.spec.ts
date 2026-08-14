@@ -114,6 +114,7 @@ function createHarness() {
   };
   const notificationOutbox = {
     dispatch: jest.fn().mockResolvedValue(undefined),
+    queueTicketAssigned: jest.fn().mockResolvedValue([]),
     queueTicketClosed: jest.fn().mockResolvedValue([]),
     queueTicketOpened: jest.fn().mockResolvedValue([]),
     queueTicketReplied: jest.fn().mockResolvedValue([]),
@@ -518,6 +519,31 @@ describe('TicketsService', () => {
     } finally {
       jest.useRealTimers();
     }
+  });
+
+  it('queues one assignment notification per new assignment only', async () => {
+    const { notificationOutbox, service, tx } = createHarness();
+    notificationOutbox.queueTicketAssigned.mockResolvedValue(['assign-outbox']);
+    tx.supportTicket.findUnique
+      .mockResolvedValueOnce({ assignees: [], status: TicketStatus.OPEN })
+      .mockResolvedValueOnce({
+        assignees: [{ userId: support.userId }],
+        status: TicketStatus.OPEN,
+      });
+
+    await service.assignToMe(support, 'ticket-1');
+    await service.assignToMe(support, 'ticket-1');
+
+    expect(notificationOutbox.queueTicketAssigned).toHaveBeenCalledTimes(1);
+    expect(notificationOutbox.queueTicketAssigned).toHaveBeenCalledWith(
+      tx,
+      'ticket-1',
+      'support_one',
+      expect.stringMatching(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+      ),
+    );
+    expect(notificationOutbox.dispatch).toHaveBeenCalledWith(['assign-outbox']);
   });
 
   it('rejects assignment to a closed ticket', async () => {

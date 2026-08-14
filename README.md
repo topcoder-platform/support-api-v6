@@ -129,6 +129,13 @@ commit and retries failed intents with capped exponential backoff.
 - A ticket-owner reply to a closed ticket atomically reopens it, emails the
   Support Team, and posts to Slack.
 - Closing a ticket emails the member and posts to Slack.
+- Assigning a ticket to a Support Team member posts to Slack only, so the rest
+  of the team sees who picked the ticket up.
+
+Slack messages are multi-line: an event headline, the challenge as a link to
+`CHALLENGE_APP_BASE_URL/challenges/{challengeId}` when the ticket has one, the
+support ticket link, and — for a new ticket — the request body as a sanitized,
+bounded plain-text preview.
 
 Email is published through Bus API v6 to Kafka topic
 `external.action.email`. `tc-bus-api-wrapper` appends `/bus/events`, so
@@ -209,4 +216,5 @@ Serving Platform UI at `support.topcoder.com` is a separate infrastructure
 step: configure DNS, certificate, CloudFront alternate domain and SPA fallback,
 the authentication return URL, and API CORS. Use
 `SUPPORT_APP_BASE_URL` per environment so notification links never point from a
-development event to production.
+development event to production. `CHALLENGE_APP_BASE_URL` sets the Work app host
+used for Slack challenge links and defaults to `https://work.topcoder.com`.
