@@ -27,6 +27,7 @@ enum NotificationType {
   TICKET_REPLIED
   TICKET_REOPENED
   TICKET_CLOSED
+  TICKET_ASSIGNED
 
   @@schema("support")
 }
@@ -123,22 +124,23 @@ model ResponseReadReceipt {
 }
 
 model NotificationOutbox {
-  id            String              @id @default(uuid()) @db.Uuid
-  dedupeKey     String              @unique @db.VarChar(180)
-  ticketId      String              @db.Uuid
-  responseId    String?             @db.Uuid
-  channel       NotificationChannel
-  type          NotificationType
-  status        NotificationStatus  @default(PENDING)
-  attempts      Int                 @default(0)
-  nextAttemptAt DateTime            @default(now())
-  lockedAt      DateTime?
-  sentAt        DateTime?
-  lastError     String?             @db.VarChar(1000)
-  createdAt     DateTime            @default(now())
-  updatedAt     DateTime            @updatedAt
-  ticket        SupportTicket       @relation(fields: [ticketId], references: [id], onDelete: Cascade)
-  response      SupportResponse?    @relation(fields: [responseId], references: [id], onDelete: Cascade)
+  id             String              @id @default(uuid()) @db.Uuid
+  dedupeKey      String              @unique @db.VarChar(180)
+  ticketId       String              @db.Uuid
+  responseId     String?             @db.Uuid
+  assigneeHandle String?             @db.VarChar(100)
+  channel        NotificationChannel
+  type           NotificationType
+  status         NotificationStatus  @default(PENDING)
+  attempts       Int                 @default(0)
+  nextAttemptAt  DateTime            @default(now())
+  lockedAt       DateTime?
+  sentAt         DateTime?
+  lastError      String?             @db.VarChar(1000)
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+  ticket         SupportTicket       @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  response       SupportResponse?    @relation(fields: [responseId], references: [id], onDelete: Cascade)
 
   @@index([status, nextAttemptAt])
   @@index([ticketId, type])
