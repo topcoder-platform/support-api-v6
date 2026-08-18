@@ -41,6 +41,7 @@ COPY --from=production-dependencies --chown=node:node /usr/src/app/node_modules 
 COPY --from=build --chown=node:node /usr/src/app/prisma ./prisma
 COPY --from=build --chown=node:node /usr/src/app/prisma.config.ts ./prisma.config.ts
 COPY --from=build --chown=node:node /usr/src/app/package.json ./package.json
+COPY --from=build --chown=node:node --chmod=755 /usr/src/app/appStartUp.sh ./appStartUp.sh
 USER node
 EXPOSE 3000
-CMD ["node", "dist/main.js"]
+CMD ["./appStartUp.sh"]

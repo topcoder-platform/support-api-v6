@@ -12,12 +12,14 @@ The service mounts all operations below `/v6/support`:
 - `GET /v6/support/tickets` — list the member's tickets, or all tickets for a
   user with the `Topcoder Support Team` role
 - `GET /v6/support/tickets/:ticketId` — get an authorized ticket timeline
-- `POST /v6/support/tickets/:ticketId/responses` — add a reply
+- `POST /v6/support/tickets/:ticketId/responses` — add a member reply, or an
+  assigned Support Team reply
 - `POST /v6/support/tickets/:ticketId/read` — mark the ticket and current
   replies read
 - `POST|DELETE /v6/support/tickets/:ticketId/assignees/me` — assign or
   unassign the current Support Team user
-- `POST /v6/support/tickets/:ticketId/close` — close a ticket as Support Team
+- `POST /v6/support/tickets/:ticketId/close` — close a ticket assigned to the
+  current Support Team user
 
 Interactive OpenAPI documentation is served at
 `/v6/support/api-docs`.
@@ -27,11 +29,87 @@ cannot expand visibility by supplying another member ID or a staff-only filter.
 Role checks for `Topcoder Support Team` are case-insensitive, while preserving
 the role as one multi-word value.
 
+## Opportunities: Contact the team contract
+
+The Opportunities challenge-detail **Contact the team** dialog uses the
+existing ticket-creation operation; it must not introduce another support
+route:
+
+```http
+POST /v6/support/tickets
+Authorization: Bearer <Topcoder member JWT>
+Content-Type: application/json
+```
+
+```json
+{
+  "challengeId": "9f20b3ef-b052-4a0f-bfec-9a92ff385b0b",
+  "description": "## Submission issue\n\nMy upload stalls after screening. [Diagnostic details](https://example.com/diagnostic)."
+}
+```
+
+The JSON body contains only:
+
+- `description` (required): Markdown text, trimmed by the API, from 1 through
+  50,000 characters.
+- `challengeId` (optional): the current v5 numeric or v6 UUID challenge ID, at
+  most 64 characters and containing only letters, numbers, `_`, or `-`.
+
+There is intentionally no subject, category, or files field. The Platform UI
+should omit those controls and fields. Images or other assets inserted by the
+Markdown editor are represented by their uploaded URLs in `description`; this
+operation accepts JSON only and does not accept multipart uploads or attachment
+metadata. Unknown fields such as `subject`, `category`, or `files` are rejected
+with HTTP 400.
+
+A successful request returns HTTP 201 with the newly created authorized ticket
+detail. The ticket is open, owned by the JWT member, marked read for that member,
+and initially has no replies or assignees:
+
+```json
+{
+  "id": "82982c2e-c9b2-4874-823d-5ef53e6569a4",
+  "memberUserId": "123456",
+  "memberHandle": "member_handle",
+  "memberHandleColor": "#2D7E2D",
+  "challengeId": "9f20b3ef-b052-4a0f-bfec-9a92ff385b0b",
+  "description": "## Submission issue\n\nMy upload stalls after screening. [Diagnostic details](https://example.com/diagnostic).",
+  "status": "OPEN",
+  "openedAt": "2026-08-13T01:23:45.000Z",
+  "updatedAt": "2026-08-13T01:23:45.000Z",
+  "latestActivityAt": "2026-08-13T01:23:45.000Z",
+  "responseCount": 0,
+  "hasUnread": false,
+  "assignees": [],
+  "readBy": [
+    {
+      "userId": "123456",
+      "readAt": "2026-08-13T01:23:45.000Z"
+    }
+  ],
+  "responses": []
+}
+```
+
+Expected failure responses are:
+
+- HTTP 400 for a missing, blank, non-string, or over-length `description`; an
+  invalid `challengeId`; malformed JSON; or any unrecognized body field.
+- HTTP 401 for a missing or invalid bearer token, or a human token without a
+  user ID.
+- HTTP 403 for a machine-to-machine token. This is a member-authored workflow.
+- HTTP 5xx when a required Identity, database, or notification-enqueue
+  dependency fails. The UI should keep the Markdown draft available for retry.
+
+Notification delivery after the database commit is retried asynchronously and
+does not turn an otherwise successful HTTP 201 response into a failure.
+
 ## Data model and unread behavior
 
 Prisma owns a dedicated PostgreSQL `support` schema. The initial migration
 creates tickets, chronologically ordered responses, many-to-many assignees,
 ticket read states, response read receipts, and a notification outbox.
+Closed ticket responses include the stored closer user ID for audit display.
 
 An absent receipt means unread. List responses compare the caller's
 `lastReadAt` with the latest request, response, or close activity. Opening or
@@ -51,6 +129,13 @@ commit and retries failed intents with capped exponential backoff.
 - A ticket-owner reply to a closed ticket atomically reopens it, emails the
   Support Team, and posts to Slack.
 - Closing a ticket emails the member and posts to Slack.
+- Assigning a ticket to a Support Team member posts to Slack only, so the rest
+  of the team sees who picked the ticket up.
+
+Slack messages are multi-line: an event headline, the challenge as a link to
+`CHALLENGE_APP_BASE_URL/challenges/{challengeId}` when the ticket has one, the
+support ticket link, and — for a new ticket — the request body as a sanitized,
+bounded plain-text preview.
 
 Email is published through Bus API v6 to Kafka topic
 `external.action.email`. `tc-bus-api-wrapper` appends `/bus/events`, so
@@ -123,13 +208,13 @@ shared Topcoder deployment suite with `APPNAME=support-api-v6` and platform
 The pipeline deploys to an existing ECS service; it intentionally does not
 provision infrastructure. Before the first deployment, operations must provide
 the ECR repository, ECS service/task family, target group, database and secret,
-and SSM values. Run a controlled one-off task from the released image with
-`./node_modules/.bin/prisma migrate deploy`; the image includes the CLI and
-migrations for that purpose. API Gateway must map `/v6/support` to the target
-group.
+and SSM values. Container startup applies pending Prisma migrations before the
+API process starts; Prisma's advisory lock keeps concurrent ECS task starts
+safe. API Gateway must map `/v6/support` to the target group.
 
 Serving Platform UI at `support.topcoder.com` is a separate infrastructure
 step: configure DNS, certificate, CloudFront alternate domain and SPA fallback,
 the authentication return URL, and API CORS. Use
 `SUPPORT_APP_BASE_URL` per environment so notification links never point from a
-development event to production.
+development event to production. `CHALLENGE_APP_BASE_URL` sets the Work app host
+used for Slack challenge links and defaults to `https://work.topcoder.com`.
