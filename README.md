@@ -135,7 +135,8 @@ commit and retries failed intents with capped exponential backoff.
 Slack messages are multi-line: an event headline, the challenge as a link to
 `CHALLENGE_APP_BASE_URL/challenges/{challengeId}` when the ticket has one, the
 support ticket link, and — for a new ticket — the request body as a sanitized,
-bounded plain-text preview.
+bounded plain-text preview that keeps the author's own line and paragraph breaks
+so separate paragraphs and list items do not run together.
 
 Email is published through Bus API v6 to Kafka topic
 `external.action.email`. `tc-bus-api-wrapper` appends `/bus/events`, so
