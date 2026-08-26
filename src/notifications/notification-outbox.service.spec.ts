@@ -12,6 +12,7 @@ import { SlackService } from '../integrations/slack.service';
 import { MemberDirectoryService } from './member-directory.service';
 import {
   NotificationOutboxService,
+  markdownNotificationBlockPreview,
   markdownNotificationPreview,
 } from './notification-outbox.service';
 
@@ -395,6 +396,38 @@ describe('NotificationOutboxService delivery', () => {
     expect(message).not.toContain('secret.example');
   });
 
+  it('keeps the request body line breaks in the opened Slack message', async () => {
+    const { db, service, slack } = createHarness();
+    db.$queryRaw.mockResolvedValue([{ id: 'opened-slack', lockedAt }]);
+    db.notificationOutbox.findUnique.mockImplementation(() => {
+      const record = claimedRecord({
+        channel: NotificationChannel.SLACK,
+        id: 'opened-slack',
+      });
+      record.ticket = {
+        ...(record.ticket as Record<string, unknown>),
+        description:
+          'My submission failed to upload.\n\nSteps I tried:\n' +
+          '- Chrome, incognito\n- Firefox\n\nThe error was a 500.',
+      };
+      return Promise.resolve(record);
+    });
+
+    await service.dispatch(['opened-slack']);
+
+    const message = slack.sendNotification.mock.calls[0][0] as string;
+    expect(message.split('\n').slice(3)).toEqual([
+      'Request:',
+      'My submission failed to upload.',
+      '',
+      'Steps I tried:',
+      'Chrome, incognito',
+      'Firefox',
+      '',
+      'The error was a 500.',
+    ]);
+  });
+
   it('omits the challenge line when the ticket has no challenge', async () => {
     const { db, service, slack } = createHarness();
     db.$queryRaw.mockResolvedValue([{ id: 'opened-slack', lockedAt }]);
@@ -643,5 +676,29 @@ describe('markdownNotificationPreview', () => {
     expect(preview).toBe('Heading label text 😀😀…');
     expect(Array.from(preview).length).toBeLessThanOrEqual(22);
     expect(preview).not.toContain('secret.example');
+  });
+});
+
+describe('markdownNotificationBlockPreview', () => {
+  it('keeps the author line breaks while still removing markdown URLs', () => {
+    const preview = markdownNotificationBlockPreview(
+      '# Upload fails\r\nSteps [tried](https://secret.example):\r\n' +
+        '- Chrome   incognito\r\n- Firefox\r\n\r\n\r\nPlease help.',
+    );
+
+    expect(preview).toBe(
+      'Upload fails\nSteps tried:\nChrome incognito\nFirefox\n\nPlease help.',
+    );
+    expect(preview).not.toContain('secret.example');
+  });
+
+  it('bounds the preview without splitting a Unicode code point', () => {
+    const preview = markdownNotificationBlockPreview(
+      'First line\nSecond line 😀😀😀😀',
+      18,
+    );
+
+    expect(preview).toBe('First line\nSecond…');
+    expect(Array.from(preview).length).toBeLessThanOrEqual(18);
   });
 });

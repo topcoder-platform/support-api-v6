@@ -27,23 +27,16 @@ const SLACK_BODY_PREVIEW_CHARACTERS = 1_000;
 const DEFAULT_CHALLENGE_APP_BASE_URL = 'https://work.topcoder.com';
 
 /**
- * Converts user-authored markdown to a compact plain-text notification preview.
- * URLs, formatting markers, HTML tags, and excess whitespace are removed before
- * the result is bounded without splitting a Unicode code point.
+ * Strips markdown syntax, HTML tags, link targets, and HTML entities from
+ * user-authored text while leaving the author's line breaks in place, so the
+ * single-line and multi-line notification previews share one sanitization pass.
  *
  * @param markdown untrusted ticket or response markdown.
- * @param maximumCharacters maximum Unicode code points in the returned preview.
- * @returns normalized plain text with an ellipsis when truncation is required.
+ * @returns plain text with markdown removed and line breaks preserved.
  */
-export function markdownNotificationPreview(
-  markdown: string,
-  maximumCharacters = NOTIFICATION_PREVIEW_CHARACTERS,
-): string {
-  const boundedMaximum =
-    Number.isInteger(maximumCharacters) && maximumCharacters > 0
-      ? maximumCharacters
-      : NOTIFICATION_PREVIEW_CHARACTERS;
-  const plainText = String(markdown)
+function sanitizeMarkdown(markdown: string): string {
+  return String(markdown)
+    .replace(/\r\n?/g, '\n')
     .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
     .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
     .replace(/<[^>]*>/g, ' ')
@@ -56,9 +49,30 @@ export function markdownNotificationPreview(
     .replace(/&lt;/gi, '<')
     .replace(/&gt;/gi, '>')
     .replace(/&quot;/gi, '"')
-    .replace(/&#0*39;/gi, "'")
-    .replace(/\s+/g, ' ')
-    .trim();
+    .replace(/&#0*39;/gi, "'");
+}
+
+/**
+ * Normalizes a caller-supplied preview bound, falling back to the stable
+ * default for non-positive or fractional values.
+ *
+ * @param maximumCharacters requested maximum Unicode code points.
+ * @returns a positive integer preview bound.
+ */
+function previewLimit(maximumCharacters: number): number {
+  return Number.isInteger(maximumCharacters) && maximumCharacters > 0
+    ? maximumCharacters
+    : NOTIFICATION_PREVIEW_CHARACTERS;
+}
+
+/**
+ * Bounds already-sanitized preview text without splitting a Unicode code point.
+ *
+ * @param plainText sanitized preview text.
+ * @param boundedMaximum positive maximum Unicode code points to keep.
+ * @returns the text, with a trailing ellipsis when truncation is required.
+ */
+function boundPreview(plainText: string, boundedMaximum: number): string {
   const codePoints = Array.from(plainText);
   if (codePoints.length <= boundedMaximum) {
     return plainText;
@@ -70,6 +84,52 @@ export function markdownNotificationPreview(
     .slice(0, boundedMaximum - 1)
     .join('')
     .trimEnd()}…`;
+}
+
+/**
+ * Converts user-authored markdown to a compact single-line plain-text preview.
+ * URLs, formatting markers, HTML tags, and excess whitespace are removed before
+ * the result is bounded without splitting a Unicode code point. Used for email
+ * template data, where the surrounding template controls the layout.
+ *
+ * @param markdown untrusted ticket or response markdown.
+ * @param maximumCharacters maximum Unicode code points in the returned preview.
+ * @returns normalized plain text with an ellipsis when truncation is required.
+ */
+export function markdownNotificationPreview(
+  markdown: string,
+  maximumCharacters = NOTIFICATION_PREVIEW_CHARACTERS,
+): string {
+  return boundPreview(
+    sanitizeMarkdown(markdown).replace(/\s+/g, ' ').trim(),
+    previewLimit(maximumCharacters),
+  );
+}
+
+/**
+ * Converts user-authored markdown to a plain-text preview that keeps the
+ * author's line and paragraph breaks, for channels such as Slack that render
+ * multi-line text. Sanitization and bounding match the single-line preview, so
+ * raw markdown and embedded URLs are still never published; only horizontal
+ * whitespace is collapsed and runs of blank lines are reduced to one, which
+ * keeps separate paragraphs and list items from reading as a single sentence.
+ *
+ * @param markdown untrusted ticket or response markdown.
+ * @param maximumCharacters maximum Unicode code points in the returned preview.
+ * @returns multi-line plain text with an ellipsis when truncation is required.
+ */
+export function markdownNotificationBlockPreview(
+  markdown: string,
+  maximumCharacters = NOTIFICATION_PREVIEW_CHARACTERS,
+): string {
+  const plainText = sanitizeMarkdown(markdown)
+    .replace(/[^\S\n]+/g, ' ')
+    .split('\n')
+    .map((line) => line.trim())
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  return boundPreview(plainText, previewLimit(maximumCharacters));
 }
 
 /**
@@ -580,7 +640,9 @@ export class NotificationOutboxService {
 
   /**
    * Publishes multi-line lifecycle text to Slack. Ticket markdown is never sent
-   * verbatim; the request body is included only as a sanitized, bounded preview.
+   * verbatim; the request body is included only as a sanitized, bounded preview
+   * that keeps the author's own line breaks so paragraphs and list items stay
+   * readable.
    *
    * @param record claimed outbox row with ticket data.
    * @returns a promise resolved after Slack accepts the message.
@@ -593,7 +655,7 @@ export class NotificationOutboxService {
         this.slackMessage(record, `New support ticket opened by ${handle}.`, [
           'Request:',
           this.escapeSlack(
-            markdownNotificationPreview(
+            markdownNotificationBlockPreview(
               record.ticket.description,
               SLACK_BODY_PREVIEW_CHARACTERS,
             ),
@@ -636,7 +698,8 @@ export class NotificationOutboxService {
    *
    * @param record claimed outbox row with ticket data.
    * @param headline already escaped event-specific first line.
-   * @param detailLines already escaped lines appended after the ticket link.
+   * @param detailLines already escaped lines appended after the ticket link;
+   *   an entry may itself span several lines, such as the request body preview.
    * @returns newline-separated Slack message text.
    */
   private slackMessage(
