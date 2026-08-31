@@ -55,6 +55,13 @@ describe('production startup', () => {
   it('uses the migration-aware startup script in the production image', () => {
     const dockerfile = readFileSync(join(projectRoot, 'Dockerfile'), 'utf8');
 
+    expect(dockerfile).toContain('ARG ALPINE_VERSION=3.24');
+    expect(dockerfile).toContain('ARG NODE_PACKAGE_VERSION=26.5.1-r0');
+    expect(dockerfile).toContain('ARG OPENSSL_PACKAGE_VERSION=3.5.8-r0');
+    expect(dockerfile).toContain('FROM alpine:${ALPINE_VERSION} AS production');
+    expect(dockerfile).toContain('"nodejs-current=${NODE_PACKAGE_VERSION}"');
+    expect(dockerfile).toContain('"libcrypto3=${OPENSSL_PACKAGE_VERSION}"');
+    expect(dockerfile).toContain('"libssl3=${OPENSSL_PACKAGE_VERSION}"');
     expect(dockerfile).toContain(
       'COPY --from=build --chown=node:node --chmod=755 /usr/src/app/appStartUp.sh ./appStartUp.sh',
     );

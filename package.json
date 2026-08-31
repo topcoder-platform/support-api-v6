@@ -5,7 +5,7 @@
   "description": "Topcoder member support ticket API",
   "packageManager": "pnpm@11.20.0",
   "engines": {
-    "node": ">=22.23.1"
+    "node": ">=26.5.1"
   },
   "scripts": {
     "build": "nest build",
