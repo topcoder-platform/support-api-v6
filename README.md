@@ -142,13 +142,15 @@ A successful request returns HTTP 201:
 }
 ```
 
-`key`, `mimetype`, and `size` are optional response metadata. `url` is accepted
-from Filestack only when it is a direct HTTPS URL on
+`key`, `mimetype`, and `size` are optional response metadata. The provider URL
+is accepted from Filestack only when it is a direct HTTPS URL on
 `cdn.filestackcontent.com` containing one valid handle path segment. Redirects,
 transform paths, credentials, ports, query strings, fragments, and other hosts
-are rejected. Provider failures are mapped to bounded 502 or 503 errors without
-logging or returning uploaded content, provider bodies, request URLs, or
-Filestack credentials.
+are rejected. For a security-enabled Filestack app, Support API then adds only
+the validated server-configured policy and signature to the returned delivery
+URL. Provider failures are mapped to bounded 502 or 503 errors without logging
+or returning uploaded content, provider bodies, request URLs, or the Filestack
+API key.
 
 ## Data model and unread behavior
 
@@ -227,6 +229,9 @@ must never be committed.
 Attachment upload requires server-side `FILESTACK_API_KEY`. When Filestack app
 security is enabled, `FILESTACK_SECURITY_POLICY` and
 `FILESTACK_SECURITY_SIGNATURE` must either both be present or both be absent.
+That policy must authorize both storage and read delivery, and its expiry must
+cover the intended lifetime of links stored in ticket Markdown; once it
+expires, previously issued attachment URLs stop working.
 The current Support ECS task and DEV Support/common SSM paths do not provide
 these names. Before deployment, operations must create SecureString parameters
 under `/config/support-api-v6/appvar/FILESTACK_API_KEY` and, when required,

@@ -118,7 +118,7 @@ describe('AttachmentsService', () => {
     });
   });
 
-  it('adds a complete server-side Filestack security pair to the provider request', async () => {
+  it('adds a complete server-side Filestack security pair to store and delivery URLs', async () => {
     const policy = 'policy+/value_123==';
     const signature = 'a'.repeat(64);
     const { http, service } = createHarness({
@@ -133,12 +133,33 @@ describe('AttachmentsService', () => {
       }),
     );
 
-    await service.upload(attachmentFile());
+    const result = await service.upload(attachmentFile());
 
     const requestUrl = new URL(http.post.mock.calls[0][0] as string);
     expect(requestUrl.searchParams.get('policy')).toBe(policy);
     expect(requestUrl.searchParams.get('signature')).toBe(signature);
+    const deliveryUrl = new URL(result.url);
+    expect(`${deliveryUrl.origin}${deliveryUrl.pathname}`).toBe(
+      'https://cdn.filestackcontent.com/s7tdGfE5RRKFUxwsZoYv',
+    );
+    expect(Object.fromEntries(deliveryUrl.searchParams)).toEqual({
+      policy,
+      signature,
+    });
   });
+
+  it.each([null, undefined, 'not-an-object', []])(
+    'maps a malformed successful provider body to a bounded gateway error',
+    async (data) => {
+      const { http, service } = createHarness();
+      http.post.mockReturnValue(of({ data }));
+
+      await expect(service.upload(attachmentFile())).rejects.toMatchObject({
+        message: 'Attachment storage returned invalid metadata.',
+        status: 502,
+      });
+    },
+  );
 
   it.each([
     attachmentFile({ buffer: Buffer.alloc(0), size: 0 }),

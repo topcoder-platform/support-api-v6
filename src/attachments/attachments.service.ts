@@ -117,10 +117,10 @@ export class AttachmentsService {
     const configuration = this.readConfiguration();
     const endpoint = this.buildStoreUrl(configuration, filename, mimetype);
 
-    let data: FilestackStoreResponse;
+    let providerData: unknown;
     try {
       const response = await firstValueFrom(
-        this.http.post<FilestackStoreResponse>(endpoint, file.buffer, {
+        this.http.post<unknown>(endpoint, file.buffer, {
           headers: {
             'Content-Length': String(file.buffer.length),
             'Content-Type': mimetype,
@@ -131,11 +131,12 @@ export class AttachmentsService {
           timeout: 30_000,
         }),
       );
-      data = response.data;
+      providerData = response.data;
     } catch (error) {
       this.throwProviderError(error);
     }
 
+    const data = this.validateStoreResponse(providerData);
     const delivery = this.validateDeliveryUrl(data.url);
     return {
       filename,
@@ -143,7 +144,7 @@ export class AttachmentsService {
       ...this.optionalStorageKey(data.key),
       mimetype,
       size: file.buffer.length,
-      url: delivery.url,
+      url: this.buildDeliveryUrl(delivery, configuration),
     };
   }
 
@@ -257,6 +258,26 @@ export class AttachmentsService {
   }
 
   /**
+   * Narrows an untrusted Filestack response before reading its metadata.
+   *
+   * @param candidate provider response body.
+   * @returns a response object whose individual fields remain untrusted.
+   * @throws BadGatewayException when the provider body is absent or malformed.
+   */
+  private validateStoreResponse(candidate: unknown): FilestackStoreResponse {
+    if (
+      !candidate ||
+      typeof candidate !== 'object' ||
+      Array.isArray(candidate)
+    ) {
+      throw new BadGatewayException(
+        'Attachment storage returned invalid metadata.',
+      );
+    }
+    return candidate;
+  }
+
+  /**
    * Accepts only a direct canonical Filestack CDN handle URL.
    *
    * @param candidate untrusted provider response URL.
@@ -298,6 +319,25 @@ export class AttachmentsService {
       handle,
       url: `https://${FILESTACK_DELIVERY_HOST}/${handle}`,
     };
+  }
+
+  /**
+   * Adds only the server-configured security pair to a validated delivery URL.
+   *
+   * @param delivery validated canonical Filestack delivery location.
+   * @param configuration validated server-side credentials.
+   * @returns an unsigned URL, or a signed URL for a security-enabled app.
+   */
+  private buildDeliveryUrl(
+    delivery: FilestackDeliveryLocation,
+    configuration: FilestackConfiguration,
+  ): string {
+    const url = new URL(delivery.url);
+    if (configuration.policy && configuration.signature) {
+      url.searchParams.set('policy', configuration.policy);
+      url.searchParams.set('signature', configuration.signature);
+    }
+    return url.toString();
   }
 
   /**
