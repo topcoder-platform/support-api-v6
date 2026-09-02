@@ -146,11 +146,9 @@ A successful request returns HTTP 201:
 is accepted from Filestack only when it is a direct HTTPS URL on
 `cdn.filestackcontent.com` containing one valid handle path segment. Redirects,
 transform paths, credentials, ports, query strings, fragments, and other hosts
-are rejected. For a security-enabled Filestack app, Support API then adds only
-the validated server-configured policy and signature to the returned delivery
-URL. Provider failures are mapped to bounded 502 or 503 errors without logging
-or returning uploaded content, provider bodies, request URLs, or the Filestack
-API key.
+are rejected. Provider failures are mapped to bounded 502 or 503 errors without
+logging or returning uploaded content, provider bodies, request URLs, or the
+Filestack API key.
 
 ## Data model and unread behavior
 
@@ -226,19 +224,17 @@ See `.env.example` for the complete list. Secrets such as
 `AUTH0_CLIENT_SECRET` and `SLACK_BOT_KEY` must be stored as encrypted values and
 must never be committed.
 
-Attachment upload requires server-side `FILESTACK_API_KEY`. When Filestack app
-security is enabled, `FILESTACK_SECURITY_POLICY` and
-`FILESTACK_SECURITY_SIGNATURE` must either both be present or both be absent.
-That policy must authorize both storage and read delivery, and its expiry must
-cover the intended lifetime of links stored in ticket Markdown; once it
-expires, previously issued attachment URLs stop working.
+Attachment upload requires server-side `FILESTACK_API_KEY` for a Filestack app
+with application security disabled. Policy/signature mode is deliberately not
+supported because a delivery credential embedded in ticket Markdown must not
+also grant upload authority. If either `FILESTACK_SECURITY_POLICY` or
+`FILESTACK_SECURITY_SIGNATURE` is configured, the endpoint fails closed with
+HTTP 503.
 The current Support ECS task and DEV Support/common SSM paths do not provide
-these names. Before deployment, operations must create SecureString parameters
-under `/config/support-api-v6/appvar/FILESTACK_API_KEY` and, when required,
-`/config/support-api-v6/appvar/FILESTACK_SECURITY_POLICY` plus
-`/config/support-api-v6/appvar/FILESTACK_SECURITY_SIGNATURE`. Apply the same
-names in each environment. A missing or incomplete configuration fails closed
-with HTTP 503; credentials are never accepted from request data.
+this API-key name. Before deployment, operations must create a SecureString
+parameter under `/config/support-api-v6/appvar/FILESTACK_API_KEY` in each
+environment. A missing or unsupported configuration fails closed with HTTP
+503; credentials are never accepted from request data.
 
 The four SendGrid dynamic-template IDs are:
 

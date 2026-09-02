@@ -118,36 +118,6 @@ describe('AttachmentsService', () => {
     });
   });
 
-  it('adds a complete server-side Filestack security pair to store and delivery URLs', async () => {
-    const policy = 'policy+/value_123==';
-    const signature = 'a'.repeat(64);
-    const { http, service } = createHarness({
-      FILESTACK_SECURITY_POLICY: policy,
-      FILESTACK_SECURITY_SIGNATURE: signature,
-    });
-    http.post.mockReturnValue(
-      of({
-        data: {
-          url: 'https://cdn.filestackcontent.com/s7tdGfE5RRKFUxwsZoYv',
-        },
-      }),
-    );
-
-    const result = await service.upload(attachmentFile());
-
-    const requestUrl = new URL(http.post.mock.calls[0][0] as string);
-    expect(requestUrl.searchParams.get('policy')).toBe(policy);
-    expect(requestUrl.searchParams.get('signature')).toBe(signature);
-    const deliveryUrl = new URL(result.url);
-    expect(`${deliveryUrl.origin}${deliveryUrl.pathname}`).toBe(
-      'https://cdn.filestackcontent.com/s7tdGfE5RRKFUxwsZoYv',
-    );
-    expect(Object.fromEntries(deliveryUrl.searchParams)).toEqual({
-      policy,
-      signature,
-    });
-  });
-
   it.each([null, undefined, 'not-an-object', []])(
     'maps a malformed successful provider body to a bounded gateway error',
     async (data) => {
@@ -202,8 +172,12 @@ describe('AttachmentsService', () => {
       FILESTACK_SECURITY_POLICY: 'policy_value_123',
       FILESTACK_SECURITY_SIGNATURE: 'not-a-signature',
     },
+    {
+      FILESTACK_SECURITY_POLICY: 'policy+/value_123==',
+      FILESTACK_SECURITY_SIGNATURE: 'a'.repeat(64),
+    },
   ])(
-    'fails closed for missing or incomplete server configuration',
+    'fails closed for missing or unsupported server configuration',
     async (overrides) => {
       const { http, service } = createHarness(overrides);
 

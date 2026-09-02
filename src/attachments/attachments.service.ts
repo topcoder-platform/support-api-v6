@@ -19,8 +19,6 @@ const FILESTACK_STORE_ENDPOINT = 'https://www.filestackapi.com/api/store/S3';
 const FILESTACK_DELIVERY_HOST = 'cdn.filestackcontent.com';
 const FILESTACK_HANDLE_PATTERN = /^[A-Za-z0-9_-]{10,128}$/;
 const API_KEY_PATTERN = /^[A-Za-z0-9_-]+$/;
-const POLICY_PATTERN = /^[A-Za-z0-9+/_-]+={0,2}$/;
-const SIGNATURE_PATTERN = /^[A-Fa-f0-9]{64}$/;
 const UNSAFE_FILENAME_CHARACTERS = /\p{Cc}/u;
 
 const ALLOWED_MIME_TYPES_BY_EXTENSION: Readonly<
@@ -70,8 +68,6 @@ interface FilestackStoreResponse {
 
 interface FilestackConfiguration {
   apiKey: string;
-  policy?: string;
-  signature?: string;
 }
 
 interface FilestackDeliveryLocation {
@@ -144,7 +140,7 @@ export class AttachmentsService {
       ...this.optionalStorageKey(data.key),
       mimetype,
       size: file.buffer.length,
-      url: this.buildDeliveryUrl(delivery, configuration),
+      url: delivery.url,
     };
   }
 
@@ -202,7 +198,7 @@ export class AttachmentsService {
   /**
    * Reads and validates server-side Filestack credentials.
    *
-   * @returns API key and an optional complete policy/signature pair.
+   * @returns API key for a Filestack app with security disabled.
    * @throws ServiceUnavailableException for absent or malformed configuration.
    */
   private readConfiguration(): FilestackConfiguration {
@@ -215,22 +211,13 @@ export class AttachmentsService {
       apiKey.length >= 8 &&
       apiKey.length <= 256 &&
       API_KEY_PATTERN.test(apiKey);
-    const securityPairIsAbsent = !policy && !signature;
-    const securityPairIsValid =
-      policy.length >= 10 &&
-      policy.length <= 8192 &&
-      POLICY_PATTERN.test(policy) &&
-      SIGNATURE_PATTERN.test(signature);
-    if (!apiKeyIsValid || (!securityPairIsAbsent && !securityPairIsValid)) {
+    if (!apiKeyIsValid || policy || signature) {
       this.logger.error('Filestack attachment upload is not configured.');
       throw new ServiceUnavailableException(
         'Attachment uploads are not configured.',
       );
     }
-    return {
-      apiKey,
-      ...(securityPairIsValid ? { policy, signature } : {}),
-    };
+    return { apiKey };
   }
 
   /**
@@ -250,10 +237,6 @@ export class AttachmentsService {
     endpoint.searchParams.set('key', configuration.apiKey);
     endpoint.searchParams.set('filename', filename);
     endpoint.searchParams.set('mimetype', mimetype);
-    if (configuration.policy && configuration.signature) {
-      endpoint.searchParams.set('policy', configuration.policy);
-      endpoint.searchParams.set('signature', configuration.signature);
-    }
     return endpoint.toString();
   }
 
@@ -319,25 +302,6 @@ export class AttachmentsService {
       handle,
       url: `https://${FILESTACK_DELIVERY_HOST}/${handle}`,
     };
-  }
-
-  /**
-   * Adds only the server-configured security pair to a validated delivery URL.
-   *
-   * @param delivery validated canonical Filestack delivery location.
-   * @param configuration validated server-side credentials.
-   * @returns an unsigned URL, or a signed URL for a security-enabled app.
-   */
-  private buildDeliveryUrl(
-    delivery: FilestackDeliveryLocation,
-    configuration: FilestackConfiguration,
-  ): string {
-    const url = new URL(delivery.url);
-    if (configuration.policy && configuration.signature) {
-      url.searchParams.set('policy', configuration.policy);
-      url.searchParams.set('signature', configuration.signature);
-    }
-    return url.toString();
   }
 
   /**
