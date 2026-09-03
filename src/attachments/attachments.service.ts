@@ -20,6 +20,8 @@ const FILESTACK_DELIVERY_HOST = 'cdn.filestackcontent.com';
 const FILESTACK_HANDLE_PATTERN = /^[A-Za-z0-9_-]{10,128}$/;
 const API_KEY_PATTERN = /^[A-Za-z0-9_-]+$/;
 const UNSAFE_FILENAME_CHARACTERS = /\p{Cc}/u;
+const DEFAULT_FILESTACK_TIMEOUT_MS = 10_000;
+const MAX_FILESTACK_TIMEOUT_MS = 20_000;
 
 const ALLOWED_MIME_TYPES_BY_EXTENSION: Readonly<
   Record<string, readonly string[]>
@@ -76,6 +78,20 @@ interface FilestackDeliveryLocation {
 }
 
 /**
+ * Resolves an outbound Filestack deadline that remains below the public gateway timeout.
+ *
+ * @param config application configuration containing the shared outbound timeout.
+ * @returns timeout in milliseconds, between one second and twenty seconds.
+ * @throws Does not throw.
+ */
+export function filestackUploadTimeout(config: ConfigService): number {
+  const parsed = Number(config.get<string>('OUTBOUND_HTTP_TIMEOUT_MS'));
+  return Number.isInteger(parsed) && parsed >= 1_000
+    ? Math.min(parsed, MAX_FILESTACK_TIMEOUT_MS)
+    : DEFAULT_FILESTACK_TIMEOUT_MS;
+}
+
+/**
  * Proxies bounded Support attachments to Filestack so browsers never connect
  * directly to S3 or receive storage credentials.
  */
@@ -124,7 +140,7 @@ export class AttachmentsService {
           maxBodyLength: MAX_ATTACHMENT_BYTES,
           maxContentLength: 64 * 1024,
           maxRedirects: 0,
-          timeout: 30_000,
+          timeout: filestackUploadTimeout(this.config),
         }),
       );
       providerData = response.data;

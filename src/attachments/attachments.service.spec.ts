@@ -11,6 +11,7 @@ import { Readable } from 'node:stream';
 import { of, throwError } from 'rxjs';
 import {
   AttachmentsService,
+  filestackUploadTimeout,
   MAX_ATTACHMENT_BYTES,
 } from './attachments.service';
 
@@ -114,8 +115,16 @@ describe('AttachmentsService', () => {
       maxBodyLength: MAX_ATTACHMENT_BYTES,
       maxContentLength: 64 * 1024,
       maxRedirects: 0,
-      timeout: 30_000,
+      timeout: 10_000,
     });
+  });
+
+  it('keeps the provider deadline below the public gateway timeout', () => {
+    const config = {
+      get: jest.fn().mockReturnValue('60000'),
+    } as unknown as ConfigService;
+
+    expect(filestackUploadTimeout(config)).toBe(20_000);
   });
 
   it.each([null, undefined, 'not-an-object', []])(
