@@ -1,6 +1,7 @@
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
+import { AttachmentsModule } from './attachments/attachments.module';
 import { AuthMiddleware } from './auth/auth.middleware';
 import { AuthModule } from './auth/auth.module';
 import { DbModule } from './db/db.module';
@@ -13,6 +14,7 @@ import { TicketsModule } from './tickets/tickets.module';
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     ScheduleModule.forRoot(),
+    AttachmentsModule,
     AuthModule,
     DbModule,
     NotificationsModule,

@@ -8,6 +8,8 @@ assignment, closure, and durable email/Slack notifications.
 The service mounts all operations below `/v6/support`:
 
 - `GET /v6/support/health` — database readiness
+- `POST /v6/support/attachments` — upload one authenticated member attachment
+  through the Support API
 - `POST /v6/support/tickets` — open a ticket for the authenticated member
 - `GET /v6/support/tickets` — list the member's tickets, or all tickets for a
   user with the `Topcoder Support Team` role
@@ -57,10 +59,12 @@ The JSON body contains only:
 
 There is intentionally no subject, category, or files field. The Platform UI
 should omit those controls and fields. Images or other assets inserted by the
-Markdown editor are represented by their uploaded URLs in `description`; this
-operation accepts JSON only and does not accept multipart uploads or attachment
-metadata. Unknown fields such as `subject`, `category`, or `files` are rejected
-with HTTP 400.
+Markdown editor are represented by their uploaded URLs in `description`.
+`POST /v6/support/tickets` remains a JSON-only operation and does not accept
+multipart uploads or attachment metadata. Unknown fields such as `subject`,
+`category`, or `files` are rejected with HTTP 400. A client that includes an
+attachment must first use the separate upload operation below, then place its
+returned canonical Filestack URL in the Markdown description.
 
 A successful request returns HTTP 201 with the newly created authorized ticket
 detail. The ticket is open, owned by the JWT member, marked read for that member,
@@ -103,6 +107,48 @@ Expected failure responses are:
 
 Notification delivery after the database commit is retried asynchronously and
 does not turn an otherwise successful HTTP 201 response into a failure.
+
+## Attachment upload contract
+
+Support attachments follow the same server-mediated shape as forum media
+uploads. The browser sends one authenticated multipart request to Support API;
+Support API validates the file and posts its raw bytes to Filestack Basic Store.
+The browser never uploads directly to S3 and never supplies a Filestack key,
+policy, signature, bucket, path, or storage URL.
+
+```http
+POST /v6/support/attachments
+Authorization: Bearer <Topcoder member JWT>
+Content-Type: multipart/form-data; boundary=<browser-generated boundary>
+```
+
+The multipart body must contain exactly one `file` part. The file must be
+non-empty and no larger than 2 MiB (2,097,152 bytes). The allowlist covers PNG,
+JPEG, GIF, WebP, BMP, TIFF, plain text and logs, CSV, JSON, XML, PDF, common
+Microsoft Office formats, and ZIP, GZIP, TAR, RAR, and 7z archives. The declared
+MIME type must match the filename extension. Active or executable formats such
+as SVG, HTML, JavaScript, and binaries are rejected.
+
+A successful request returns HTTP 201:
+
+```json
+{
+  "filename": "screenshot.png",
+  "handle": "s7tdGfE5RRKFUxwsZoYv",
+  "key": "a1RyBxiglW92bS2SRmqM_screenshot.png",
+  "mimetype": "image/png",
+  "size": 8331,
+  "url": "https://cdn.filestackcontent.com/s7tdGfE5RRKFUxwsZoYv"
+}
+```
+
+`key`, `mimetype`, and `size` are optional response metadata. The provider URL
+is accepted from Filestack only when it is a direct HTTPS URL on
+`cdn.filestackcontent.com` containing one valid handle path segment. Redirects,
+transform paths, credentials, ports, query strings, fragments, and other hosts
+are rejected. Provider failures are mapped to bounded 502 or 503 errors without
+logging or returning uploaded content, provider bodies, request URLs, or the
+Filestack API key.
 
 ## Data model and unread behavior
 
@@ -177,6 +223,18 @@ pnpm build
 See `.env.example` for the complete list. Secrets such as
 `AUTH0_CLIENT_SECRET` and `SLACK_BOT_KEY` must be stored as encrypted values and
 must never be committed.
+
+Attachment upload requires server-side `FILESTACK_API_KEY` for a Filestack app
+with application security disabled. Policy/signature mode is deliberately not
+supported because a delivery credential embedded in ticket Markdown must not
+also grant upload authority. If either `FILESTACK_SECURITY_POLICY` or
+`FILESTACK_SECURITY_SIGNATURE` is configured, the endpoint fails closed with
+HTTP 503.
+The current Support ECS task and DEV Support/common SSM paths do not provide
+this API-key name. Before deployment, operations must create a SecureString
+parameter under `/config/support-api-v6/appvar/FILESTACK_API_KEY` in each
+environment. A missing or unsupported configuration fails closed with HTTP
+503; credentials are never accepted from request data.
 
 The four SendGrid dynamic-template IDs are:
 
