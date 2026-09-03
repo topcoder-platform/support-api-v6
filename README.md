@@ -148,7 +148,9 @@ is accepted from Filestack only when it is a direct HTTPS URL on
 transform paths, credentials, ports, query strings, fragments, and other hosts
 are rejected. Provider failures are mapped to bounded 502 or 503 errors without
 logging or returning uploaded content, provider bodies, request URLs, or the
-Filestack API key.
+Filestack API key. Filestack calls use `OUTBOUND_HTTP_TIMEOUT_MS` with a
+twenty-second maximum, ensuring a stalled provider returns a retryable 503
+before the public API gateway can replace it with an opaque 504.
 
 ## Data model and unread behavior
 
