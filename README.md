@@ -112,9 +112,11 @@ does not turn an otherwise successful HTTP 201 response into a failure.
 
 Support attachments follow the same server-mediated shape as forum media
 uploads. The browser sends one authenticated multipart request to Support API;
-Support API validates the file and posts its raw bytes to Filestack Basic Store.
-The browser never uploads directly to S3 and never supplies a Filestack key,
-policy, signature, bucket, path, or storage URL.
+Support API validates the file and passes its bytes to the official Filestack
+client's hosted multipart upload flow. Filestack selects its default hosted
+storage; Support API does not set a bucket, container, path, region, or custom
+storage location. The browser never uploads directly to S3 and never receives a
+Filestack key, policy, signature, presigned URL, or storage target.
 
 ```http
 POST /v6/support/attachments
@@ -148,9 +150,10 @@ is accepted from Filestack only when it is a direct HTTPS URL on
 transform paths, credentials, ports, query strings, fragments, and other hosts
 are rejected. Provider failures are mapped to bounded 502 or 503 errors without
 logging or returning uploaded content, provider bodies, request URLs, or the
-Filestack API key. Filestack calls use `OUTBOUND_HTTP_TIMEOUT_MS` with a
-twenty-second maximum, ensuring a stalled provider returns a retryable 503
-before the public API gateway can replace it with an opaque 504.
+Filestack API key. The complete hosted multipart flow uses
+`OUTBOUND_HTTP_TIMEOUT_MS` as its deadline with a twenty-second maximum,
+ensuring a stalled provider returns a retryable 503 before the public API
+gateway can replace it with an opaque 504.
 
 ## Data model and unread behavior
 

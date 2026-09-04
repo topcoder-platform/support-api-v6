@@ -1,4 +1,3 @@
-import { HttpService } from '@nestjs/axios';
 import {
   BadGatewayException,
   BadRequestException,
@@ -8,20 +7,20 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { isAxiosError } from 'axios';
 import { extname } from 'node:path';
-import { firstValueFrom } from 'rxjs';
 import { AttachmentUploadResponseDto } from './dto';
 
 export const MAX_ATTACHMENT_BYTES = 2 * 1024 * 1024;
 
-const FILESTACK_STORE_ENDPOINT = 'https://www.filestackapi.com/api/store/S3';
 const FILESTACK_DELIVERY_HOST = 'cdn.filestackcontent.com';
 const FILESTACK_HANDLE_PATTERN = /^[A-Za-z0-9_-]{10,128}$/;
 const API_KEY_PATTERN = /^[A-Za-z0-9_-]+$/;
 const UNSAFE_FILENAME_CHARACTERS = /\p{Cc}/u;
 const DEFAULT_FILESTACK_TIMEOUT_MS = 10_000;
 const MAX_FILESTACK_TIMEOUT_MS = 20_000;
+
+/** Identifies a complete hosted upload that exceeded its API-safe deadline. */
+class FilestackUploadDeadlineError extends Error {}
 
 const ALLOWED_MIME_TYPES_BY_EXTENSION: Readonly<
   Record<string, readonly string[]>
@@ -60,7 +59,7 @@ const ALLOWED_MIME_TYPES_BY_EXTENSION: Readonly<
   '.zip': ['application/zip', 'application/x-zip-compressed'],
 };
 
-interface FilestackStoreResponse {
+interface FilestackUploadResponse {
   filename?: unknown;
   key?: unknown;
   size?: unknown;
@@ -75,6 +74,15 @@ interface FilestackConfiguration {
 interface FilestackDeliveryLocation {
   handle: string;
   url: string;
+}
+
+interface FilestackUploadControl {
+  cancel?: () => void;
+}
+
+interface FilestackProviderError {
+  details?: unknown;
+  type?: unknown;
 }
 
 /**
@@ -102,17 +110,13 @@ export class AttachmentsService {
   /**
    * Creates the attachment service.
    *
-   * @param http HTTP client used for the fixed Filestack Store endpoint.
    * @param config server-only Filestack application configuration.
    */
-  constructor(
-    private readonly http: HttpService,
-    private readonly config: ConfigService,
-  ) {}
+  constructor(private readonly config: ConfigService) {}
 
   /**
-   * Validates a Multer file, posts its raw bytes to Filestack, and normalizes
-   * only canonical HTTPS Filestack delivery metadata.
+   * Validates a Multer file, uploads it through Filestack's hosted multipart
+   * flow, and normalizes only canonical HTTPS delivery metadata.
    *
    * @param file authenticated member upload held in memory by Multer.
    * @returns filename, handle, storage key, type, size, and delivery URL.
@@ -127,28 +131,20 @@ export class AttachmentsService {
     const filename = this.validateFilename(file.originalname);
     const mimetype = this.validateFile(file, filename);
     const configuration = this.readConfiguration();
-    const endpoint = this.buildStoreUrl(configuration, filename, mimetype);
 
     let providerData: unknown;
     try {
-      const response = await firstValueFrom(
-        this.http.post<unknown>(endpoint, file.buffer, {
-          headers: {
-            'Content-Length': String(file.buffer.length),
-            'Content-Type': mimetype,
-          },
-          maxBodyLength: MAX_ATTACHMENT_BYTES,
-          maxContentLength: 64 * 1024,
-          maxRedirects: 0,
-          timeout: filestackUploadTimeout(this.config),
-        }),
+      providerData = await this.uploadToFilestack(
+        configuration,
+        file.buffer,
+        filename,
+        mimetype,
       );
-      providerData = response.data;
     } catch (error) {
       this.throwProviderError(error);
     }
 
-    const data = this.validateStoreResponse(providerData);
+    const data = this.validateUploadResponse(providerData);
     const delivery = this.validateDeliveryUrl(data.url);
     return {
       filename,
@@ -158,6 +154,71 @@ export class AttachmentsService {
       size: file.buffer.length,
       url: delivery.url,
     };
+  }
+
+  /**
+   * Uploads bytes with the official Filestack multipart client and default
+   * hosted storage, matching the server-mediated forum media flow.
+   *
+   * @param configuration validated server-side Filestack credentials.
+   * @param buffer validated file contents.
+   * @param filename normalized original filename.
+   * @param mimetype validated declared MIME type.
+   * @returns untrusted Filestack upload metadata.
+   * @throws A provider error or internal deadline marker for normalization by the caller.
+   */
+  private async uploadToFilestack(
+    configuration: FilestackConfiguration,
+    buffer: Buffer,
+    filename: string,
+    mimetype: string,
+  ): Promise<unknown> {
+    const { init: initFilestack } = await import('filestack-js');
+    const client = initFilestack(configuration.apiKey);
+    const control: FilestackUploadControl = {};
+    const timeout = filestackUploadTimeout(this.config);
+    let providerError: unknown;
+    let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+    const rememberProviderError = (error: unknown): void => {
+      providerError = error;
+    };
+
+    client.on('upload.error', rememberProviderError);
+    try {
+      const upload = client.upload(
+        buffer,
+        {
+          concurrency: 1,
+          retry: 1,
+          retryFactor: 2,
+          retryMaxTime: 1_000,
+          timeout,
+        },
+        { filename, mimetype },
+        control,
+      );
+      const deadline = new Promise<never>((_resolve, reject) => {
+        deadlineTimer = setTimeout(() => {
+          try {
+            control.cancel?.();
+          } catch {
+            // The deadline rejection below remains authoritative if cancellation fails.
+          }
+          reject(new FilestackUploadDeadlineError());
+        }, timeout);
+      });
+      return await Promise.race([upload, deadline]);
+    } catch (error) {
+      if (error instanceof FilestackUploadDeadlineError) {
+        throw error;
+      }
+      throw providerError ?? error;
+    } finally {
+      if (deadlineTimer !== undefined) {
+        clearTimeout(deadlineTimer);
+      }
+      client.removeListener('upload.error', rememberProviderError);
+    }
   }
 
   /**
@@ -237,33 +298,13 @@ export class AttachmentsService {
   }
 
   /**
-   * Constructs the fixed Filestack Basic Store URL with encoded server values.
-   *
-   * @param configuration validated server-side credentials.
-   * @param filename normalized original filename.
-   * @param mimetype validated declared MIME type.
-   * @returns absolute Filestack Store endpoint URL.
-   */
-  private buildStoreUrl(
-    configuration: FilestackConfiguration,
-    filename: string,
-    mimetype: string,
-  ): string {
-    const endpoint = new URL(FILESTACK_STORE_ENDPOINT);
-    endpoint.searchParams.set('key', configuration.apiKey);
-    endpoint.searchParams.set('filename', filename);
-    endpoint.searchParams.set('mimetype', mimetype);
-    return endpoint.toString();
-  }
-
-  /**
    * Narrows an untrusted Filestack response before reading its metadata.
    *
    * @param candidate provider response body.
    * @returns a response object whose individual fields remain untrusted.
    * @throws BadGatewayException when the provider body is absent or malformed.
    */
-  private validateStoreResponse(candidate: unknown): FilestackStoreResponse {
+  private validateUploadResponse(candidate: unknown): FilestackUploadResponse {
     if (
       !candidate ||
       typeof candidate !== 'object' ||
@@ -342,25 +383,43 @@ export class AttachmentsService {
    * Converts all provider failures to bounded public errors without leaking
    * request URLs, credentials, response bodies, or uploaded content.
    *
-   * @param error outbound HTTP failure.
+   * @param error official SDK or provider failure.
    * @throws ServiceUnavailableException for network and timeout failures.
    * @throws BadGatewayException for provider HTTP or unknown failures.
    */
   private throwProviderError(error: unknown): never {
-    if (isAxiosError(error)) {
-      const status = error.response?.status;
-      if (status !== undefined) {
-        this.logger.warn(
-          `Filestack attachment upload failed with HTTP ${status}.`,
-        );
-        throw new BadGatewayException(
-          'Attachment storage rejected the upload.',
-        );
-      }
-      const safeCode =
-        error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT'
-          ? 'timeout'
-          : 'network';
+    if (error instanceof FilestackUploadDeadlineError) {
+      this.logger.warn('Filestack attachment upload timeout failure.');
+      throw new ServiceUnavailableException(
+        'Attachment storage is temporarily unavailable.',
+      );
+    }
+
+    const providerError =
+      error && typeof error === 'object'
+        ? (error as FilestackProviderError)
+        : undefined;
+    const details =
+      providerError?.details && typeof providerError.details === 'object'
+        ? (providerError.details as { code?: unknown })
+        : undefined;
+    const status = details?.code;
+    if (
+      typeof status === 'number' &&
+      Number.isInteger(status) &&
+      status >= 400 &&
+      status <= 599
+    ) {
+      this.logger.warn(
+        `Filestack attachment upload failed with HTTP ${status}.`,
+      );
+      throw new BadGatewayException('Attachment storage rejected the upload.');
+    }
+    if (
+      providerError?.type === 'request' ||
+      providerError?.type === 'aborted'
+    ) {
+      const safeCode = providerError.type === 'aborted' ? 'timeout' : 'network';
       this.logger.warn(`Filestack attachment upload ${safeCode} failure.`);
       throw new ServiceUnavailableException(
         'Attachment storage is temporarily unavailable.',
