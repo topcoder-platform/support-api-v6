@@ -11,6 +11,9 @@ overrides:
   form-data: 4.0.6
   lodash: 4.18.1
 
+patchedDependencies:
+  filestack-js@3.51.6: d953fc3f89f30a33f82b26ba894c6b8ce90d25a233851ab5e702b6fb5f9aba4c
+
 importers:
 
   .:
@@ -53,7 +56,7 @@ importers:
         version: 0.14.4
       filestack-js:
         specifier: ^3.51.6
-        version: 3.51.6(@types/node@22.20.1)(supports-color@8.1.1)(typescript@5.9.3)
+        version: 3.51.6(patch_hash=d953fc3f89f30a33f82b26ba894c6b8ce90d25a233851ab5e702b6fb5f9aba4c)(@types/node@22.20.1)(supports-color@8.1.1)(typescript@5.9.3)
       multer:
         specifier: 2.2.0
         version: 2.2.0
@@ -6108,7 +6111,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  filestack-js@3.51.6(@types/node@22.20.1)(supports-color@8.1.1)(typescript@5.9.3):
+  filestack-js@3.51.6(patch_hash=d953fc3f89f30a33f82b26ba894c6b8ce90d25a233851ab5e702b6fb5f9aba4c)(@types/node@22.20.1)(supports-color@8.1.1)(typescript@5.9.3):
     dependencies:
       '@babel/runtime': 7.29.7
       '@filestack/loader': 1.0.9

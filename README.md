@@ -155,6 +155,19 @@ Filestack API key. The complete hosted multipart flow uses
 ensuring a stalled provider returns a retryable 503 before the public API
 gateway can replace it with an opaque 504.
 
+Provider throttling (HTTP 429) and provider HTTP 5xx responses also return 503;
+other provider rejections return 502. Neither status exposes provider bodies.
+
+The Node HTTP adapter in `filestack-js@3.51.6` is patched through pnpm's
+`patchedDependencies` (`patches/filestack-js@3.51.6.patch`). Its upload body
+streams use `stream.pipeline` so asynchronous write errors, including
+`ECANCELED` during deadline cancellation, reject the request instead of
+terminating the API process. The patch also checks response cancellation before
+clearing the request reference. Both Docker dependency stages copy the patch
+before installation. Keep this patch when upgrading the SDK until the upstream
+transport handles these cases; `filestack-http.spec.ts` exercises the installed
+adapter, cancellation, interrupted responses, and a complete 2 MiB body.
+
 ## Data model and unread behavior
 
 Prisma owns a dedicated PostgreSQL `support` schema. The initial migration
