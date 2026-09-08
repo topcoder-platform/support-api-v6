@@ -1,4 +1,3 @@
-import { HttpService } from '@nestjs/axios';
 import {
   BadGatewayException,
   BadRequestException,
@@ -7,13 +6,17 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { init as initFilestack, type Client } from 'filestack-js';
 import { Readable } from 'node:stream';
-import { of, throwError } from 'rxjs';
 import {
   AttachmentsService,
   filestackUploadTimeout,
   MAX_ATTACHMENT_BYTES,
 } from './attachments.service';
+
+jest.mock('filestack-js', () => ({
+  init: jest.fn(),
+}));
 
 /** Builds a Multer memory-storage file for attachment service tests. */
 function attachmentFile(
@@ -35,11 +38,37 @@ function attachmentFile(
   };
 }
 
-/** Builds the service around observable HTTP and configuration doubles. */
+type UploadErrorListener = (error: unknown) => void;
+
+/** Builds the service around official Filestack client and configuration doubles. */
 function createHarness(
   configurationOverrides: Record<string, string | undefined> = {},
 ) {
-  const http = { post: jest.fn() };
+  const upload = jest.fn();
+  const uploadErrorListeners = new Set<UploadErrorListener>();
+  const client = {
+    on: jest.fn(),
+    removeListener: jest.fn(),
+    upload,
+  };
+  client.on.mockImplementation(
+    (event: string, listener: UploadErrorListener): typeof client => {
+      if (event === 'upload.error') {
+        uploadErrorListeners.add(listener);
+      }
+      return client;
+    },
+  );
+  client.removeListener.mockImplementation(
+    (event: string, listener: UploadErrorListener): typeof client => {
+      if (event === 'upload.error') {
+        uploadErrorListeners.delete(listener);
+      }
+      return client;
+    },
+  );
+  jest.mocked(initFilestack).mockReturnValue(client as unknown as Client);
+
   const configuration: Record<string, string | undefined> = {
     FILESTACK_API_KEY: 'filestack-key-123',
     FILESTACK_SECURITY_POLICY: undefined,
@@ -49,32 +78,33 @@ function createHarness(
   const config = {
     get: jest.fn((key: string) => configuration[key]),
   };
-  const service = new AttachmentsService(
-    http as unknown as HttpService,
-    config as unknown as ConfigService,
-  );
-  return { config, http, service };
+  const service = new AttachmentsService(config as unknown as ConfigService);
+  const emitUploadError = (error: unknown): void => {
+    uploadErrorListeners.forEach((listener) => listener(error));
+  };
+  return { client, config, emitUploadError, service, upload };
 }
 
 describe('AttachmentsService', () => {
+  beforeEach(() => {
+    jest.mocked(initFilestack).mockReset();
+  });
+
   afterEach(() => {
+    jest.useRealTimers();
     jest.restoreAllMocks();
   });
 
-  it('posts raw bytes to the fixed Filestack Store API and normalizes metadata', async () => {
-    const { http, service } = createHarness();
+  it('uses the official hosted upload without custom S3 storage targeting', async () => {
+    const { client, service, upload } = createHarness();
     const file = attachmentFile();
-    http.post.mockReturnValue(
-      of({
-        data: {
-          filename: 'screenshot.png',
-          key: 'stored_screenshot.png',
-          size: file.size,
-          type: 'image/png',
-          url: 'https://cdn.filestackcontent.com/s7tdGfE5RRKFUxwsZoYv',
-        },
-      }),
-    );
+    upload.mockResolvedValue({
+      filename: 'screenshot.png',
+      key: 'stored_screenshot.png',
+      size: file.size,
+      type: 'image/png',
+      url: 'https://cdn.filestackcontent.com/s7tdGfE5RRKFUxwsZoYv',
+    });
 
     await expect(service.upload(file)).resolves.toEqual({
       filename: 'screenshot.png',
@@ -85,41 +115,43 @@ describe('AttachmentsService', () => {
       url: 'https://cdn.filestackcontent.com/s7tdGfE5RRKFUxwsZoYv',
     });
 
-    expect(http.post).toHaveBeenCalledTimes(1);
-    const [rawUrl, body, requestConfig] = http.post.mock.calls[0] as [
-      string,
-      Buffer,
-      {
-        headers: Record<string, string>;
-        maxBodyLength: number;
-        maxContentLength: number;
-        maxRedirects: number;
-        timeout: number;
-      },
-    ];
-    const url = new URL(rawUrl);
-    expect(`${url.origin}${url.pathname}`).toBe(
-      'https://www.filestackapi.com/api/store/S3',
-    );
-    expect(Object.fromEntries(url.searchParams)).toEqual({
-      filename: 'screenshot.png',
-      key: 'filestack-key-123',
-      mimetype: 'image/png',
-    });
+    expect(initFilestack).toHaveBeenCalledWith('filestack-key-123');
+    expect(upload).toHaveBeenCalledTimes(1);
+    const [body, uploadOptions, storeOptions, control, security] = upload.mock
+      .calls[0] as [Buffer, object, Record<string, unknown>, object, unknown?];
     expect(body).toBe(file.buffer);
-    expect(requestConfig).toMatchObject({
-      headers: {
-        'Content-Length': String(file.buffer.length),
-        'Content-Type': 'image/png',
-      },
-      maxBodyLength: MAX_ATTACHMENT_BYTES,
-      maxContentLength: 64 * 1024,
-      maxRedirects: 0,
+    expect(uploadOptions).toEqual({
+      concurrency: 1,
+      retry: 1,
+      retryFactor: 2,
+      retryMaxTime: 1_000,
       timeout: 10_000,
     });
+    expect(storeOptions).toEqual({
+      filename: 'screenshot.png',
+      mimetype: 'image/png',
+    });
+    expect(storeOptions).not.toHaveProperty('container');
+    expect(storeOptions).not.toHaveProperty('location');
+    expect(storeOptions).not.toHaveProperty('path');
+    expect(storeOptions).not.toHaveProperty('region');
+    expect(control).toEqual(
+      expect.not.objectContaining({
+        container: expect.anything(),
+        path: expect.anything(),
+        region: expect.anything(),
+      }),
+    );
+    expect(security).toBeUndefined();
+    const errorListener = client.on.mock.calls[0][1] as UploadErrorListener;
+    expect(client.on).toHaveBeenCalledWith('upload.error', errorListener);
+    expect(client.removeListener).toHaveBeenCalledWith(
+      'upload.error',
+      errorListener,
+    );
   });
 
-  it('keeps the provider deadline below the public gateway timeout', () => {
+  it('keeps the complete provider upload below the public gateway timeout', () => {
     const config = {
       get: jest.fn().mockReturnValue('60000'),
     } as unknown as ConfigService;
@@ -128,10 +160,10 @@ describe('AttachmentsService', () => {
   });
 
   it.each([null, undefined, 'not-an-object', []])(
-    'maps a malformed successful provider body to a bounded gateway error',
+    'maps malformed successful provider metadata to a bounded gateway error',
     async (data) => {
-      const { http, service } = createHarness();
-      http.post.mockReturnValue(of({ data }));
+      const { service, upload } = createHarness();
+      upload.mockResolvedValue(data);
 
       await expect(service.upload(attachmentFile())).rejects.toMatchObject({
         message: 'Attachment storage returned invalid metadata.',
@@ -148,20 +180,18 @@ describe('AttachmentsService', () => {
     }),
     attachmentFile({ mimetype: 'text/html', originalname: 'page.html' }),
     attachmentFile({ mimetype: 'image/png', originalname: 'renamed.exe' }),
-  ])(
-    'rejects empty, oversized, and unsafe content before delivery',
-    async (file) => {
-      const { http, service } = createHarness();
+  ])('rejects empty and unsafe content before delivery', async (file) => {
+    const { service, upload } = createHarness();
 
-      await expect(service.upload(file)).rejects.toBeInstanceOf(
-        BadRequestException,
-      );
-      expect(http.post).not.toHaveBeenCalled();
-    },
-  );
+    await expect(service.upload(file)).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    expect(initFilestack).not.toHaveBeenCalled();
+    expect(upload).not.toHaveBeenCalled();
+  });
 
   it('rejects oversized content before provider delivery', async () => {
-    const { http, service } = createHarness();
+    const { service, upload } = createHarness();
     const file = attachmentFile({
       buffer: Buffer.alloc(MAX_ATTACHMENT_BYTES + 1),
       size: MAX_ATTACHMENT_BYTES + 1,
@@ -170,7 +200,8 @@ describe('AttachmentsService', () => {
     await expect(service.upload(file)).rejects.toBeInstanceOf(
       PayloadTooLargeException,
     );
-    expect(http.post).not.toHaveBeenCalled();
+    expect(initFilestack).not.toHaveBeenCalled();
+    expect(upload).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -188,12 +219,13 @@ describe('AttachmentsService', () => {
   ])(
     'fails closed for missing or unsupported server configuration',
     async (overrides) => {
-      const { http, service } = createHarness(overrides);
+      const { service, upload } = createHarness(overrides);
 
       await expect(service.upload(attachmentFile())).rejects.toBeInstanceOf(
         ServiceUnavailableException,
       );
-      expect(http.post).not.toHaveBeenCalled();
+      expect(initFilestack).not.toHaveBeenCalled();
+      expect(upload).not.toHaveBeenCalled();
     },
   );
 
@@ -203,26 +235,27 @@ describe('AttachmentsService', () => {
     'https://cdn.filestackcontent.com/resize=width:10/s7tdGfE5RRKFUxwsZoYv',
     'https://cdn.filestackcontent.com/s7tdGfE5RRKFUxwsZoYv?redirect=evil',
   ])('rejects a non-canonical provider delivery URL', async (url) => {
-    const { http, service } = createHarness();
-    http.post.mockReturnValue(of({ data: { url } }));
+    const { service, upload } = createHarness();
+    upload.mockResolvedValue({ url });
 
     await expect(service.upload(attachmentFile())).rejects.toBeInstanceOf(
       BadGatewayException,
     );
   });
 
-  it('maps provider HTTP errors without returning response bodies or credentials', async () => {
+  it('maps provider HTTP errors without returning bodies or credentials', async () => {
     const warning = jest
       .spyOn(Logger.prototype, 'warn')
       .mockImplementation(() => undefined);
-    const { http, service } = createHarness();
-    http.post.mockReturnValue(
-      throwError(() => ({
-        isAxiosError: true,
+    const { emitUploadError, service, upload } = createHarness();
+    upload.mockImplementation(() => {
+      emitUploadError({
+        details: { code: 403, data: 'private provider body' },
         message: 'filestack-key-123 and private provider body',
-        response: { data: 'private provider body', status: 403 },
-      })),
-    );
+        type: 'request',
+      });
+      return Promise.reject(new Error('SDK returned a failed file'));
+    });
 
     await expect(service.upload(attachmentFile())).rejects.toMatchObject({
       message: 'Attachment storage rejected the upload.',
@@ -240,18 +273,48 @@ describe('AttachmentsService', () => {
   });
 
   it('maps provider network failures to a retryable service error', async () => {
-    const { http, service } = createHarness();
-    http.post.mockReturnValue(
-      throwError(() => ({
-        code: 'ETIMEDOUT',
-        isAxiosError: true,
+    const { emitUploadError, service, upload } = createHarness();
+    upload.mockImplementation(() => {
+      emitUploadError({
+        details: {},
         message: 'socket details',
-      })),
-    );
+        type: 'request',
+      });
+      return Promise.reject(new Error('SDK returned a failed file'));
+    });
 
     await expect(service.upload(attachmentFile())).rejects.toMatchObject({
       message: 'Attachment storage is temporarily unavailable.',
       status: 503,
     });
+  });
+
+  it('cancels a stalled SDK upload at the bounded provider deadline', async () => {
+    jest.useFakeTimers();
+    const cancel = jest.fn();
+    const { service, upload } = createHarness({
+      OUTBOUND_HTTP_TIMEOUT_MS: '1000',
+    });
+    upload.mockImplementation(
+      (
+        _body: Buffer,
+        _uploadOptions: object,
+        _storeOptions: object,
+        control: { cancel?: () => void },
+      ) => {
+        control.cancel = cancel;
+        return new Promise(() => undefined);
+      },
+    );
+
+    const result = expect(
+      service.upload(attachmentFile()),
+    ).rejects.toMatchObject({
+      message: 'Attachment storage is temporarily unavailable.',
+      status: 503,
+    });
+    await jest.advanceTimersByTimeAsync(1_000);
+    await result;
+    expect(cancel).toHaveBeenCalledTimes(1);
   });
 });
