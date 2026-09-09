@@ -272,22 +272,41 @@ describe('AttachmentsService', () => {
     );
   });
 
-  it('maps provider network failures to a retryable service error', async () => {
-    const { emitUploadError, service, upload } = createHarness();
-    upload.mockImplementation(() => {
-      emitUploadError({
-        details: {},
-        message: 'socket details',
-        type: 'request',
+  it.each([429, 500, 502, 503, 504])(
+    'maps provider HTTP %s to temporary storage unavailability',
+    async (code) => {
+      const { emitUploadError, service, upload } = createHarness();
+      upload.mockImplementation(() => {
+        emitUploadError({ details: { code }, type: 'request' });
+        return Promise.reject(new Error('SDK returned a failed file'));
       });
-      return Promise.reject(new Error('SDK returned a failed file'));
-    });
 
-    await expect(service.upload(attachmentFile())).rejects.toMatchObject({
-      message: 'Attachment storage is temporarily unavailable.',
-      status: 503,
-    });
-  });
+      await expect(service.upload(attachmentFile())).rejects.toMatchObject({
+        message: 'Attachment storage is temporarily unavailable.',
+        status: 503,
+      });
+    },
+  );
+
+  it.each(['request', 'aborted', 'timeout'])(
+    'maps provider %s failures to a retryable service error',
+    async (type) => {
+      const { emitUploadError, service, upload } = createHarness();
+      upload.mockImplementation(() => {
+        emitUploadError({
+          details: {},
+          message: 'socket details',
+          type,
+        });
+        return Promise.reject(new Error('SDK returned a failed file'));
+      });
+
+      await expect(service.upload(attachmentFile())).rejects.toMatchObject({
+        message: 'Attachment storage is temporarily unavailable.',
+        status: 503,
+      });
+    },
+  );
 
   it('cancels a stalled SDK upload at the bounded provider deadline', async () => {
     jest.useFakeTimers();

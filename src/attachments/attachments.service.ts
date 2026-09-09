@@ -384,7 +384,7 @@ export class AttachmentsService {
    * request URLs, credentials, response bodies, or uploaded content.
    *
    * @param error official SDK or provider failure.
-   * @throws ServiceUnavailableException for network and timeout failures.
+   * @throws ServiceUnavailableException for network, timeout, throttling, and provider availability failures.
    * @throws BadGatewayException for provider HTTP or unknown failures.
    */
   private throwProviderError(error: unknown): never {
@@ -413,13 +413,19 @@ export class AttachmentsService {
       this.logger.warn(
         `Filestack attachment upload failed with HTTP ${status}.`,
       );
+      if (status === 429 || status >= 500) {
+        throw new ServiceUnavailableException(
+          'Attachment storage is temporarily unavailable.',
+        );
+      }
       throw new BadGatewayException('Attachment storage rejected the upload.');
     }
     if (
       providerError?.type === 'request' ||
-      providerError?.type === 'aborted'
+      providerError?.type === 'aborted' ||
+      providerError?.type === 'timeout'
     ) {
-      const safeCode = providerError.type === 'aborted' ? 'timeout' : 'network';
+      const safeCode = providerError.type === 'request' ? 'network' : 'timeout';
       this.logger.warn(`Filestack attachment upload ${safeCode} failure.`);
       throw new ServiceUnavailableException(
         'Attachment storage is temporarily unavailable.',
