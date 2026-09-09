@@ -168,6 +168,23 @@ before installation. Keep this patch when upgrading the SDK until the upstream
 transport handles these cases; `filestack-http.spec.ts` exercises the installed
 adapter, cancellation, interrupted responses, and a complete 2 MiB body.
 
+### ECS outbound network access
+
+The ECS task must be able to complete HTTPS connections to
+`upload.filestackapi.com` and the regional `upload-<region>.filestackapi.com`
+endpoints selected by Filestack. In an AWS Network Firewall domain allowlist,
+the `.filestackapi.com` suffix covers these endpoints. The task also needs
+access to the storage endpoint returned by Filestack; the current dev app
+selects an S3 host covered by the existing `.amazonaws.com` allowlist entry.
+
+A permitted TCP connection alone does not establish HTTPS connectivity. A
+firewall can drop the TLS handshake based on its server name before the upload
+request is sent. This produces the bounded 503 response after
+`OUTBOUND_HTTP_TIMEOUT_MS`, even for tiny files. Check Network Firewall alert
+logs for blocked `upload.filestackapi.com` TLS traffic before increasing the
+timeout. Verify changes with an upload from the ECS network, since a successful
+upload from a developer machine does not exercise the same firewall rules.
+
 ## Data model and unread behavior
 
 Prisma owns a dedicated PostgreSQL `support` schema. The initial migration
