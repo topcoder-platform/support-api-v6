@@ -13,6 +13,7 @@ WORKDIR /usr/src/app
 
 FROM tooling AS dependencies
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY patches ./patches
 COPY prisma ./prisma
 COPY prisma.config.ts ./
 RUN SUPPORT_DATABASE_URL="postgresql://user:pass@localhost:5432/topcoder?schema=support" pnpm install --frozen-lockfile
@@ -25,6 +26,7 @@ RUN pnpm lint && pnpm test --runInBand && pnpm build
 
 FROM tooling AS production-dependencies
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY patches ./patches
 COPY prisma ./prisma
 COPY prisma.config.ts ./
 RUN pnpm install --prod --frozen-lockfile \

@@ -1,0 +1,40 @@
+diff --git a/build/main/lib/request/adapters/http.js b/build/main/lib/request/adapters/http.js
+index a38d55b6a812fd0388e7ae2cf9daf159494415ab..9e72f38295cd42c9bcf188da261dcc7ed0c300e3 100644
+--- a/build/main/lib/request/adapters/http.js
++++ b/build/main/lib/request/adapters/http.js
+@@ -222,11 +222,12 @@ var HttpAdapter = /** @class */ (function () {
+                 stream.on('data', function (chunk) { return responseBuffer.push(chunk); });
+                 /* istanbul ignore next: its hard to test socket events with jest and nock - tested manually */
+                 stream.on('error', function (err) {
++                    var aborted = !req || req.aborted;
+                     res = undefined;
+                     req = undefined;
+                     responseBuffer = undefined;
+                     debug('Request error: Aborted %O', err);
+-                    if (req.aborted) {
++                    if (aborted) {
+                         return;
+                     }
+                     // clear cancel token to avoid memory leak
+@@ -293,7 +294,20 @@ var HttpAdapter = /** @class */ (function () {
+                 return reject(new error_1.FsRequestError("Request error: ".concat(err.code), config, null, error_1.FsRequestErrorCode.NETWORK));
+             });
+             if (Buffer.isBuffer(data) && ['POST', 'PUT'].indexOf(config.method) > -1) {
+-                return _this.bufferToChunks(data).pipe(_this.getProgressMonitor(config, data.length)).pipe(new HttpWritableStream(req));
++                // Forward asynchronous body-stream errors into the request promise, including cancellation.
++                return Stream.pipeline(_this.bufferToChunks(data), _this.getProgressMonitor(config, data.length), new HttpWritableStream(req), function (err) {
++                    if (!err) {
++                        return;
++                    }
++                    if (cancelListener) {
++                        config.cancelToken.removeListener(cancelListener);
++                    }
++                    if (req) {
++                        req.destroy();
++                        req = null;
++                    }
++                    reject(new error_1.FsRequestError('Upload body stream failed', config, null, error_1.FsRequestErrorCode.NETWORK));
++                });
+             }
+             req.end(data);
+         });
