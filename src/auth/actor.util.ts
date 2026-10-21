@@ -70,17 +70,14 @@ export function normalizeScopeClaim(value: unknown): string[] {
 }
 
 /**
- * Extracts all conventional and namespaced role claims from a decoded JWT user.
+ * Reads only normalized roles from the shared verified principal; ignores raw namespaced claims.
  *
  * @param authUser object attached by tc-core-library-js.
  * @returns deduplicated role names.
  * @throws Does not throw.
  */
 export function getAuthRoles(authUser: Record<string, unknown>): string[] {
-  const roles = Object.entries(authUser)
-    .filter(([key]) => /(^|[/.:])roles?$/.test(key.toLowerCase()))
-    .flatMap(([, value]) => normalizeRoleClaim(value));
-  return Array.from(new Set(roles));
+  return normalizeRoleClaim(authUser['roles']);
 }
 
 /**
@@ -93,20 +90,16 @@ export function getAuthRoles(authUser: Record<string, unknown>): string[] {
 export function buildSupportActor(
   authUser: Record<string, unknown>,
 ): SupportActor {
-  const isMachine = Boolean(authUser['isMachine']);
-  const rawUserId = authUser['userId'] ?? authUser['sub'];
+  const isMachine =
+    authUser['kind'] === 'service' && authUser['isMachine'] === true;
+  const rawUserId = authUser['userId'];
   const userId = scalarClaim(rawUserId);
   if (!isMachine && !userId) {
     throw new UnauthorizedException('The token does not contain a user ID.');
   }
 
   const roles = getAuthRoles(authUser);
-  const scopes = Array.from(
-    new Set([
-      ...normalizeScopeClaim(authUser['scope']),
-      ...normalizeScopeClaim(authUser['scopes']),
-    ]),
-  );
+  const scopes = isMachine ? normalizeScopeClaim(authUser['scopes']) : [];
   const supportRole = SUPPORT_TEAM_ROLE.toLowerCase();
 
   return {
@@ -119,6 +112,6 @@ export function buildSupportActor(
     ),
     roles,
     scopes,
-    userId: isMachine ? scalarClaim(authUser['azp']) || 'system' : userId,
+    userId: isMachine ? scalarClaim(authUser['clientId']) || 'system' : userId,
   };
 }

@@ -39,20 +39,18 @@ const TEMPLATE_PLACEHOLDERS = new Set([
 /**
  * Creates the shared Bus API client with a strictly v6 base URL.
  *
- * @param config application configuration containing Bus API and Auth0 values.
+ * @param config application configuration containing Bus API and explicit Keycloak values; wrapper option names are legacy.
  * @returns an authenticated Topcoder Bus API wrapper client.
  * @throws Error when required configuration is absent or BUSAPI_URL is not a v6 base.
  */
 export function buildBusApiClient(config: ConfigService): BusApiClient {
   const tokenCacheTime = Number(config.get<string>('TOKEN_CACHE_TIME'));
-  const auth0ProxyServerUrl = config
-    .get<string>('AUTH0_PROXY_SERVER_URL')
-    ?.trim();
+  const auth0ProxyServerUrl = config.get<string>('KEYCLOAK_TOKEN_URL')?.trim();
   const options: BusApiConfiguration = {
-    AUTH0_URL: required(config, 'AUTH0_URL'),
-    AUTH0_AUDIENCE: required(config, 'AUTH0_AUDIENCE'),
-    AUTH0_CLIENT_ID: required(config, 'AUTH0_CLIENT_ID'),
-    AUTH0_CLIENT_SECRET: required(config, 'AUTH0_CLIENT_SECRET'),
+    AUTH0_URL: required(config, 'KEYCLOAK_TOKEN_URL'),
+    AUTH0_AUDIENCE: required(config, 'KEYCLOAK_AUDIENCE'),
+    AUTH0_CLIENT_ID: required(config, 'KEYCLOAK_CLIENT_ID'),
+    AUTH0_CLIENT_SECRET: required(config, 'KEYCLOAK_CLIENT_SECRET'),
     BUSAPI_URL: resolveV6BusApiBase(config),
     KAFKA_ERROR_TOPIC:
       config.get<string>('KAFKA_ERROR_TOPIC')?.trim() ||

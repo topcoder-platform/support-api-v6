@@ -239,7 +239,7 @@ pnpm build
 ## Configuration
 
 See `.env.example` for the complete list. Secrets such as
-`AUTH0_CLIENT_SECRET` and `SLACK_BOT_KEY` must be stored as encrypted values and
+`KEYCLOAK_CLIENT_SECRET` and `SLACK_BOT_KEY` must be stored as encrypted values and
 must never be committed.
 
 Attachment upload requires server-side `FILESTACK_API_KEY` for a Filestack app
@@ -295,3 +295,8 @@ the authentication return URL, and API CORS. Use
 `SUPPORT_APP_BASE_URL` per environment so notification links never point from a
 development event to production. `CHALLENGE_APP_BASE_URL` sets the Work app host
 used for Slack challenge links and defaults to `https://work.topcoder.com`.
+
+## Keycloak migration branch
+
+On `keycloak_m2M`, follow [Keycloak configuration and rollout](docs/keycloak-m2m.md).
+Legacy Auth0 M2M settings below do not configure token issuance on this branch.

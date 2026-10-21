@@ -13,6 +13,7 @@ peerDependencyRules:
     - react-dom
 
 overrides:
+  tc-core-library-js: https://codeload.github.com/topcoder-platform/tc-core-library-js/tar.gz/c262f4aca971904f308085bdeaaed35cdf3cfa7d
   '@nestjs/swagger>js-yaml': 5.2.3
   axios: 1.18.1
   follow-redirects: 1.16.0

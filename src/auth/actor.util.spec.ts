@@ -13,13 +13,14 @@ describe('actor utilities', () => {
     ]);
   });
 
-  it('reads namespaced roles without treating unrelated claims as roles', () => {
+  it('uses normalized roles and ignores raw namespaced role claims', () => {
     expect(
       getAuthRoles({
-        'https://topcoder.com/roles': ['Topcoder Support Team', 'Member'],
+        roles: ['Member'],
+        'https://untrusted.example/roles': ['Topcoder Support Team'],
         profile: 'ignored',
       }),
-    ).toEqual(['Topcoder Support Team', 'Member']);
+    ).toEqual(['Member']);
   });
 
   it('normalizes array and space-delimited OAuth scopes', () => {

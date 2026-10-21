@@ -20,7 +20,8 @@
     "start:prod": "node dist/main.js",
     "test": "jest",
     "test:cov": "jest --coverage",
-    "test:watch": "jest --watch"
+    "test:watch": "jest --watch",
+    "test:keycloak": "node --test test/keycloak-auth.test.cjs"
   },
   "dependencies": {
     "@nestjs/axios": "^4.0.1",
@@ -42,7 +43,7 @@
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
     "tc-bus-api-wrapper": "github:topcoder-platform/tc-bus-api-wrapper",
-    "tc-core-library-js": "github:topcoder-platform/tc-core-library-js#master"
+    "tc-core-library-js": "https://codeload.github.com/topcoder-platform/tc-core-library-js/tar.gz/c262f4aca971904f308085bdeaaed35cdf3cfa7d"
   },
   "devDependencies": {
     "@eslint/js": "^9.18.0",
