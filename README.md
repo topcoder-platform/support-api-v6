@@ -239,8 +239,15 @@ pnpm build
 ## Configuration
 
 See `.env.example` for the complete list. Secrets such as
-`KEYCLOAK_CLIENT_SECRET` and `SLACK_BOT_KEY` must be stored as encrypted values and
-must never be committed.
+`KEYCLOAK_CLIENT_SECRET`, `AUTH0_CLIENT_SECRET` and `SLACK_BOT_KEY` must be stored as
+encrypted values and must never be committed.
+
+M2M tokens (Identity, Member API and Bus) come from the provider selected by
+`USE_KEYCLOAK`: `true` uses `KEYCLOAK_ISSUER`, `KEYCLOAK_AUDIENCE`,
+`KEYCLOAK_TOKEN_URL`, `KEYCLOAK_CLIENT_ID`, `KEYCLOAK_CLIENT_SECRET` and optional
+`KEYCLOAK_SCOPE`; unset or `false` uses `AUTH0_URL`, `AUTH0_AUDIENCE`,
+`AUTH0_CLIENT_ID`, `AUTH0_CLIENT_SECRET` and optional `AUTH0_PROXY_SERVER_URL`. Any
+other value fails at startup. See [docs/keycloak-m2m.md](docs/keycloak-m2m.md).
 
 Attachment upload requires server-side `FILESTACK_API_KEY` for a Filestack app
 with application security disabled. Policy/signature mode is deliberately not
@@ -299,4 +306,5 @@ used for Slack challenge links and defaults to `https://work.topcoder.com`.
 ## Keycloak migration branch
 
 On `keycloak_m2M`, follow [Keycloak configuration and rollout](docs/keycloak-m2m.md).
-Legacy Auth0 M2M settings below do not configure token issuance on this branch.
+`USE_KEYCLOAK=true` selects Keycloak for M2M tokens; unset or `false` keeps the Auth0
+`AUTH0_*` settings, so rolling back is a configuration change and a new deployment.
