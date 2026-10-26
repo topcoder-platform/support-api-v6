@@ -4,8 +4,8 @@ import type {
   BusApiClient,
   BusApiConfiguration,
   BusApiEvent,
-} from 'tc-bus-api-wrapper';
-import createBusApiClient from 'tc-bus-api-wrapper';
+} from 'tc-core-library-js';
+import { createBusApiClient as createBusApiClient } from 'tc-core-library-js';
 import {
   integrationDeliveryError,
   providerDeliveryError,
@@ -69,7 +69,7 @@ export function buildBusApiClient(config: ConfigService): BusApiClient {
 
 /**
  * Resolves and validates the wrapper base whose `/bus/events` suffix is added
- * by `tc-bus-api-wrapper`.
+ * by `tc-core-library-js`.
  *
  * @param config application configuration containing BUSAPI_URL.
  * @returns an absolute URL ending in `/v6`.

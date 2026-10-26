@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NextFunction, Request, Response } from 'express';
-import { middleware } from 'tc-core-library-js';
+import { createJwtAuthenticator } from 'tc-core-library-js';
 
 /**
  * Resolves the authorization header preserved by supported proxy layers.
@@ -37,9 +37,7 @@ function resolveAuthorizationHeader(headers: Request['headers']): string {
 @Injectable()
 export class AuthMiddleware implements NestMiddleware {
   private readonly logger = new Logger(AuthMiddleware.name);
-  private readonly authenticator: ReturnType<
-    typeof middleware.jwtAuthenticator
-  >;
+  private readonly authenticator: ReturnType<typeof createJwtAuthenticator>;
 
   /**
    * Configures the shared Topcoder JWT authenticator.
@@ -62,7 +60,9 @@ export class AuthMiddleware implements NestMiddleware {
         issuers.split(',').map((issuer) => issuer.trim()),
       );
     }
-    this.authenticator = middleware.jwtAuthenticator({
+    this.authenticator = createJwtAuthenticator({
+      AUTH0_AUDIENCE: process.env.AUTH0_AUDIENCE,
+      JWT_AUDIENCE: process.env.JWT_AUDIENCE,
       AUTH_SECRET: configuredSecret ?? 'local-development-only-secret',
       VALID_ISSUERS: issuers,
     });
