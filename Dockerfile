@@ -2,6 +2,7 @@
 
 ARG NODE_VERSION=26.5.1
 ARG ALPINE_VERSION=3.24
+# Minimum secure package versions; Alpine repositories replace older revisions.
 ARG NODE_PACKAGE_VERSION=26.5.1-r0
 ARG OPENSSL_PACKAGE_VERSION=3.5.8-r0
 ARG PNPM_VERSION=11.20.0
@@ -40,9 +41,9 @@ ARG NODE_PACKAGE_VERSION
 ARG OPENSSL_PACKAGE_VERSION
 RUN apk upgrade --no-cache \
   && apk add --no-cache \
-    "libcrypto3=${OPENSSL_PACKAGE_VERSION}" \
-    "libssl3=${OPENSSL_PACKAGE_VERSION}" \
-    "nodejs-current=${NODE_PACKAGE_VERSION}" \
+    "libcrypto3>=${OPENSSL_PACKAGE_VERSION}" \
+    "libssl3>=${OPENSSL_PACKAGE_VERSION}" \
+    "nodejs-current>=${NODE_PACKAGE_VERSION}" \
   && addgroup -S node \
   && adduser -S -G node node
 ENV NODE_ENV=production
