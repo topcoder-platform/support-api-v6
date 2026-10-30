@@ -1,6 +1,9 @@
 # syntax=docker/dockerfile:1.7
 
-ARG NODE_VERSION=22.23.1
+ARG NODE_VERSION=26.5.1
+ARG ALPINE_VERSION=3.24
+ARG NODE_PACKAGE_VERSION=26.5.1-r0
+ARG OPENSSL_PACKAGE_VERSION=3.5.8-r0
 ARG PNPM_VERSION=11.20.0
 ARG PRISMA_VERSION=7.9.1
 
@@ -32,10 +35,16 @@ COPY prisma.config.ts ./
 RUN pnpm install --prod --frozen-lockfile \
   && SUPPORT_DATABASE_URL="postgresql://user:pass@localhost:5432/topcoder?schema=support" prisma generate
 
-FROM node:${NODE_VERSION}-alpine AS production
+FROM alpine:${ALPINE_VERSION} AS production
+ARG NODE_PACKAGE_VERSION
+ARG OPENSSL_PACKAGE_VERSION
 RUN apk upgrade --no-cache \
-  && rm -rf /usr/local/lib/node_modules/npm \
-  && rm -f /usr/local/bin/npm /usr/local/bin/npx
+  && apk add --no-cache \
+    "libcrypto3=${OPENSSL_PACKAGE_VERSION}" \
+    "libssl3=${OPENSSL_PACKAGE_VERSION}" \
+    "nodejs-current=${NODE_PACKAGE_VERSION}" \
+  && addgroup -S node \
+  && adduser -S -G node node
 ENV NODE_ENV=production
 WORKDIR /usr/src/app
 COPY --from=build --chown=node:node /usr/src/app/dist ./dist

@@ -216,6 +216,10 @@ successful ticket response. Logs exclude markdown, addresses, and secrets.
 
 ## Local development
 
+Node.js 26.5.1 is the supported development and production runtime. Run
+`nvm use` in this project before invoking pnpm so the local toolchain matches
+the container runtime.
+
 ```bash
 nvm use
 cp .env.example .env
@@ -285,8 +289,10 @@ shared Topcoder deployment suite with `APPNAME=support-api-v6` and platform
 The pipeline deploys to an existing ECS service; it intentionally does not
 provision infrastructure. Before the first deployment, operations must provide
 the ECR repository, ECS service/task family, target group, database and secret,
-and SSM values. Container startup applies pending Prisma migrations before the
-API process starts; Prisma's advisory lock keeps concurrent ECS task starts
+and SSM values. The production image installs Alpine 3.24's dynamically linked
+Node.js 26.5.1 package and OpenSSL 3.5.8 libraries, while npm and pnpm remain in
+build-only stages. Container startup applies pending Prisma migrations before
+the API process starts; Prisma's advisory lock keeps concurrent ECS task starts
 safe. API Gateway must map `/v6/support` to the target group.
 
 Serving Platform UI at `support.topcoder.com` is a separate infrastructure
