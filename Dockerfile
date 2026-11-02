@@ -17,6 +17,7 @@ WORKDIR /usr/src/app
 
 FROM tooling AS dependencies
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY tools ./tools
 COPY patches ./patches
 COPY prisma ./prisma
 COPY prisma.config.ts ./
@@ -26,10 +27,12 @@ RUN SUPPORT_DATABASE_URL="postgresql://user:pass@localhost:5432/topcoder?schema=
 FROM tooling AS build
 COPY --from=dependencies /usr/src/app/node_modules ./node_modules
 COPY . .
+RUN pnpm run test:dependency-compat
 RUN pnpm lint && pnpm test --runInBand && pnpm build
 
 FROM tooling AS production-dependencies
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY tools ./tools
 COPY patches ./patches
 COPY prisma ./prisma
 COPY prisma.config.ts ./

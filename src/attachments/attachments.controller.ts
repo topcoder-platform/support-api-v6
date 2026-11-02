@@ -54,10 +54,9 @@ export class AttachmentsController {
       limits: {
         fields: 0,
         files: 1,
-        // Multer marks a file truncated when it reaches its byte limit. Keep
-        // the transport ceiling one byte higher, then enforce the inclusive
-        // 2 MiB product limit again in AttachmentsService.
-        fileSize: MAX_ATTACHMENT_BYTES + 1,
+        // Multer 2.5 treats fileSize as an inclusive ceiling. Enforce the
+        // same 2 MiB limit here and again in AttachmentsService.
+        fileSize: MAX_ATTACHMENT_BYTES,
       },
       storage: memoryStorage(),
     }),
