@@ -42,7 +42,7 @@
     "prisma": "7.9.1",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
-    "tc-core-library-js": "github:topcoder-platform/tc-core-library-js#v4.0.0-rc.1"
+    "tc-core-library-js": "github:topcoder-platform/tc-core-library-js#v4.0.0-rc.2"
   },
   "devDependencies": {
     "@eslint/js": "^9.18.0",
