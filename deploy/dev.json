@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 2,
+  "environment": "dev",
+  "accountId": "811668436784",
+  "region": "us-east-1",
+  "deployRoleArn": "arn:aws:iam::811668436784:role/support-api-v6-dev-deploy",
+  "taskRoleArn": null,
+  "executionRoleArn": "arn:aws:iam::811668436784:role/ecsTaskExecutionRole",
+  "cluster": "topcoder-infrastructure",
+  "service": "support-api-v6",
+  "taskFamily": "support-api-v6",
+  "circleciOrgId": "947bef5e-1669-415d-b83c-4fc85155b7df",
+  "circleciProjectId": "c9059bd9-be43-4dde-b4db-c631ae423360",
+  "repository": "github.com/topcoder-platform/support-api-v6",
+  "branch": "develop",
+  "images": {
+    "support-api-v6": "support-api-v6"
+  }
+}
