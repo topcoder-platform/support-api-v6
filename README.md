@@ -168,6 +168,23 @@ before installation. Keep this patch when upgrading the SDK until the upstream
 transport handles these cases; `filestack-http.spec.ts` exercises the installed
 adapter, cancellation, interrupted responses, and a complete 2 MiB body.
 
+### ECS outbound network access
+
+The ECS task must be able to complete HTTPS connections to
+`upload.filestackapi.com` and the regional `upload-<region>.filestackapi.com`
+endpoints selected by Filestack. In an AWS Network Firewall domain allowlist,
+the `.filestackapi.com` suffix covers these endpoints. The task also needs
+access to the storage endpoint returned by Filestack; the current dev app
+selects an S3 host covered by the existing `.amazonaws.com` allowlist entry.
+
+A permitted TCP connection alone does not establish HTTPS connectivity. A
+firewall can drop the TLS handshake based on its server name before the upload
+request is sent. This produces the bounded 503 response after
+`OUTBOUND_HTTP_TIMEOUT_MS`, even for tiny files. Check Network Firewall alert
+logs for blocked `upload.filestackapi.com` TLS traffic before increasing the
+timeout. Verify changes with an upload from the ECS network, since a successful
+upload from a developer machine does not exercise the same firewall rules.
+
 ## Data model and unread behavior
 
 Prisma owns a dedicated PostgreSQL `support` schema. The initial migration
@@ -215,6 +232,11 @@ ticket mutation; post-commit delivery failures are retried without changing the
 successful ticket response. Logs exclude markdown, addresses, and secrets.
 
 ## Local development
+
+Node.js 26.5.1 is the development and build runtime. Run `nvm use` in this
+project before invoking pnpm so the local toolchain matches the container
+build stages. Production uses Alpine 3.24's Node.js package at version 26.5.1
+or newer.
 
 ```bash
 nvm use
@@ -285,9 +307,14 @@ shared Topcoder deployment suite with `APPNAME=support-api-v6` and platform
 The pipeline deploys to an existing ECS service; it intentionally does not
 provision infrastructure. Before the first deployment, operations must provide
 the ECR repository, ECS service/task family, target group, database and secret,
-and SSM values. Container startup applies pending Prisma migrations before the
-API process starts; Prisma's advisory lock keeps concurrent ECS task starts
-safe. API Gateway must map `/v6/support` to the target group.
+and SSM values. The production image installs Alpine 3.24's dynamically linked
+Node.js package (at least 26.5.1-r0) and OpenSSL libraries (at least 3.5.8-r0),
+while npm and pnpm remain in build-only stages. These package constraints are
+minimum security versions rather than exact pins because Alpine repositories
+replace older package revisions when updates are published. Container startup
+applies pending Prisma migrations before the API process starts; Prisma's
+advisory lock keeps concurrent ECS task starts safe. API Gateway must map
+`/v6/support` to the target group.
 
 Serving Platform UI at `support.topcoder.com` is a separate infrastructure
 step: configure DNS, certificate, CloudFront alternate domain and SPA fallback,
@@ -295,3 +322,26 @@ the authentication return URL, and API CORS. Use
 `SUPPORT_APP_BASE_URL` per environment so notification links never point from a
 development event to production. `CHALLENGE_APP_BASE_URL` sets the Work app host
 used for Slack challenge links and defaults to `https://work.topcoder.com`.
+
+## Shared authentication and bus client (v6 refresh)
+
+This branch uses `tc-core-library-js` **4.0.0-rc.1**. Use its named
+`createJwtVerifier` / `createJwtAuthenticator`, `createM2MClient`, and
+`createBusApiClient` exports for shared authentication and bus API publishing.
+Service-specific roles, scopes, sessions and ownership checks remain in this service.
+The former bus wrapper dependency and local JWT cryptography must not be reintroduced.
+
+RSA verification requires an exact configured issuer and audience (`JWT_AUDIENCE`
+for client tokens, `AUTH0_AUDIENCE` for machine/API tokens, or this service's explicit
+issuer-policy settings). HMAC secrets must be at least 32 bytes; no default secret
+is supplied. Expiry is enforced. Machine identity comes from the shared verifier,
+not the presence of scopes. Supply real development credentials through the service's
+existing environment configuration before deployment.
+
+Bus publishers use `createBusApiClient(config).postEvent(event)` with the existing
+event envelope and optional key. Configure `BUSAPI_URL` for v6 and the existing
+OAuth credentials/token provider. The client uses bounded HTTPS requests and does
+not retry POSTs automatically. Application retry/outbox behavior remains local.
+
+See the [core migration guide](https://github.com/topcoder-platform/tc-core-library-js/blob/v4.0.0-rc.1/MIGRATION.md)
+for the API mapping, compatibility requirements, and rollout scope.

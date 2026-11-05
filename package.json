@@ -5,7 +5,7 @@
   "description": "Topcoder member support ticket API",
   "packageManager": "pnpm@11.20.0",
   "engines": {
-    "node": ">=22.23.1"
+    "node": ">=26.5.1"
   },
   "scripts": {
     "build": "nest build",
@@ -20,7 +20,8 @@
     "start:prod": "node dist/main.js",
     "test": "jest",
     "test:cov": "jest --coverage",
-    "test:watch": "jest --watch"
+    "test:watch": "jest --watch",
+    "test:dependency-compat": "node --test tools/minimatch-compat/index.test.cjs"
   },
   "dependencies": {
     "@nestjs/axios": "^4.0.1",
@@ -32,17 +33,16 @@
     "@nestjs/swagger": "^11.4.6",
     "@prisma/adapter-pg": "7.9.1",
     "@prisma/client": "7.9.1",
-    "axios": "^1.18.1",
+    "axios": "^1.20.0",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.4",
     "filestack-js": "^3.51.6",
-    "multer": "2.2.0",
+    "multer": "2.5.0",
     "pg": "^8.16.3",
     "prisma": "7.9.1",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
-    "tc-bus-api-wrapper": "github:topcoder-platform/tc-bus-api-wrapper",
-    "tc-core-library-js": "github:topcoder-platform/tc-core-library-js#master"
+    "tc-core-library-js": "github:topcoder-platform/tc-core-library-js#v4.0.0-rc.2"
   },
   "devDependencies": {
     "@eslint/js": "^9.18.0",

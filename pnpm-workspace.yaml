@@ -13,9 +13,24 @@ peerDependencyRules:
     - react-dom
 
 overrides:
-  '@nestjs/swagger>js-yaml': 5.2.3
-  axios: 1.18.1
-  follow-redirects: 1.16.0
+  'proxy-addr': 2.0.8
+  'axios': 1.20.0
+  'follow-redirects': 1.16.2
+  'multer': 2.5.0
+  'qs': 6.16.1
+  'handlebars': 4.7.10
+  'mysql2': 3.23.1
+  'js-yaml@^3': 3.15.2
+  'js-yaml@^4': 4.3.2
+  'js-yaml@^5': 5.4.1
+  'brace-expansion@^1': 1.1.21
+  'brace-expansion@^5': 5.0.12
+  'fast-uri': 4.2.3
+  'body-parser@^2': 2.4.0
+  'glob@>=9': 14.0.2
+  'minimatch@<9': file:tools/minimatch-compat
+  'minimatch@>=9': 11.0.1
+  '@prisma/config>deepmerge-ts': 8.0.0
   form-data: 4.0.6
   lodash: 4.18.1
 

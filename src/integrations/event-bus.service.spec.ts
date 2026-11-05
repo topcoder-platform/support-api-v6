@@ -1,5 +1,5 @@
 import { ConfigService } from '@nestjs/config';
-import type { BusApiClient, BusApiEvent } from 'tc-bus-api-wrapper';
+import type { BusApiClient, BusApiEvent } from 'tc-core-library-js';
 import { EventBusService, resolveV6BusApiBase } from './event-bus.service';
 import { IntegrationDeliveryError } from './integration-delivery.error';
 
