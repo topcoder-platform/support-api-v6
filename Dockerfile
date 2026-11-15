@@ -1,9 +1,9 @@
 # syntax=docker/dockerfile:1.7
 
-ARG NODE_VERSION=26.5.1
+ARG NODE_VERSION=26.13.1
 ARG ALPINE_VERSION=3.24
 # Minimum secure package versions; Alpine repositories replace older revisions.
-ARG NODE_PACKAGE_VERSION=26.5.1-r0
+ARG NODE_PACKAGE_VERSION=26.13.1-r0
 ARG OPENSSL_PACKAGE_VERSION=3.5.8-r0
 ARG PNPM_VERSION=11.20.0
 ARG PRISMA_VERSION=7.9.1
@@ -11,7 +11,7 @@ ARG PRISMA_VERSION=7.9.1
 FROM node:${NODE_VERSION}-alpine AS tooling
 ARG PNPM_VERSION
 ARG PRISMA_VERSION
-RUN apk upgrade --no-cache && apk add --no-cache git openssh-client
+RUN apk upgrade --no-cache && apk add --no-cache 'zlib>=1.4-r0' git openssh-client
 RUN npm install --global pnpm@${PNPM_VERSION} prisma@${PRISMA_VERSION}
 WORKDIR /usr/src/app
 
@@ -43,7 +43,7 @@ FROM alpine:${ALPINE_VERSION} AS production
 ARG NODE_PACKAGE_VERSION
 ARG OPENSSL_PACKAGE_VERSION
 RUN apk upgrade --no-cache \
-  && apk add --no-cache \
+  && apk add --no-cache 'zlib>=1.4-r0' \
     "libcrypto3>=${OPENSSL_PACKAGE_VERSION}" \
     "libssl3>=${OPENSSL_PACKAGE_VERSION}" \
     "nodejs-current>=${NODE_PACKAGE_VERSION}" \

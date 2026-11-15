@@ -56,7 +56,7 @@ describe('production startup', () => {
     const dockerfile = readFileSync(join(projectRoot, 'Dockerfile'), 'utf8');
 
     expect(dockerfile).toContain('ARG ALPINE_VERSION=3.24');
-    expect(dockerfile).toContain('ARG NODE_PACKAGE_VERSION=26.5.1-r0');
+    expect(dockerfile).toContain('ARG NODE_PACKAGE_VERSION=26.13.1-r0');
     expect(dockerfile).toContain('ARG OPENSSL_PACKAGE_VERSION=3.5.8-r0');
     expect(dockerfile).toContain('FROM alpine:${ALPINE_VERSION} AS production');
     expect(dockerfile).toContain('"nodejs-current>=${NODE_PACKAGE_VERSION}"');
