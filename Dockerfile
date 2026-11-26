@@ -6,13 +6,11 @@ ARG ALPINE_VERSION=3.24
 ARG NODE_PACKAGE_VERSION=26.13.1
 ARG OPENSSL_PACKAGE_VERSION=3.5.9-r1
 ARG PNPM_VERSION=11.20.0
-ARG PRISMA_VERSION=7.9.1
 
 FROM node:${NODE_VERSION}-alpine AS tooling
 ARG PNPM_VERSION
-ARG PRISMA_VERSION
 RUN apk upgrade --no-cache && apk add --no-cache 'zlib>=1.4-r0' git openssh-client
-RUN npm install --global pnpm@${PNPM_VERSION} prisma@${PRISMA_VERSION}
+RUN npm install --global pnpm@${PNPM_VERSION}
 WORKDIR /usr/src/app
 
 FROM tooling AS dependencies
@@ -22,7 +20,7 @@ COPY patches ./patches
 COPY prisma ./prisma
 COPY prisma.config.ts ./
 RUN SUPPORT_DATABASE_URL="postgresql://user:pass@localhost:5432/topcoder?schema=support" pnpm install --frozen-lockfile
-RUN SUPPORT_DATABASE_URL="postgresql://user:pass@localhost:5432/topcoder?schema=support" prisma generate
+RUN SUPPORT_DATABASE_URL="postgresql://user:pass@localhost:5432/topcoder?schema=support" pnpm exec prisma generate
 
 FROM tooling AS build
 COPY --from=dependencies /usr/src/app/node_modules ./node_modules
@@ -37,7 +35,8 @@ COPY patches ./patches
 COPY prisma ./prisma
 COPY prisma.config.ts ./
 RUN pnpm install --prod --frozen-lockfile \
-  && SUPPORT_DATABASE_URL="postgresql://user:pass@localhost:5432/topcoder?schema=support" prisma generate
+  && SUPPORT_DATABASE_URL="postgresql://user:pass@localhost:5432/topcoder?schema=support" pnpm exec prisma generate \
+  && node -e "require('node:assert/strict').equal(require('@prisma/client').Prisma.prismaVersion.client, require('@prisma/client/package.json').version)"
 
 FROM alpine:${ALPINE_VERSION} AS production
 ARG NODE_PACKAGE_VERSION
