@@ -37,6 +37,7 @@ overrides:
 
 allowBuilds:
   '@nestjs/core': false
+  '@parcel/watcher': false
   '@prisma/client': true
   '@prisma/engines': true
   '@scarf/scarf': false
@@ -45,3 +46,9 @@ allowBuilds:
 
 patchedDependencies:
   filestack-js@3.51.6: patches/filestack-js@3.51.6.patch
+
+minimumReleaseAgeExclude:
+  - '@nestjs/common@12.6.3'
+  - '@nestjs/core@12.6.3'
+  - '@nestjs/platform-express@12.6.3'
+  - '@nestjs/testing@12.6.3'

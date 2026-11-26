@@ -233,7 +233,7 @@ successful ticket response. Logs exclude markdown, addresses, and secrets.
 
 ## Local development
 
-Node.js 26.5.1 is the development and build runtime. Run `nvm use` in this
+Node.js 26.13.1 is the development and build runtime. Run `nvm use` in this
 project before invoking pnpm so the local toolchain matches the container
 build stages. Production uses Alpine 3.24's Node.js package at version 26.5.1
 or newer.
